@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inventree-supplier-return"
+version = "0.1.0"
+description = "Supplier Return / RMA workflow for InvenTree purchase orders"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "Per Vices Corporation"}]
+license = {text = "MIT"}
+dependencies = []
+
+[project.entry-points."inventree_plugins"]
+supplier_return = "supplier_return:SupplierReturnPlugin"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["supplier_return*"]

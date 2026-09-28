@@ -1,0 +1,2 @@
+recursive-include supplier_return/static *
+recursive-include supplier_return/migrations *.py
