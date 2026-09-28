@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.1.1 registration / UI milestone."""
+"""InvenTree Supplier Return plugin - V0.1.2 registration / UI milestone."""
 
 from django.utils.translation import gettext_lazy as _
 from plugin import InvenTreePlugin
@@ -15,7 +15,7 @@ class SupplierReturnPlugin(SettingsMixin, UserInterfaceMixin, InvenTreePlugin):
         "Manage supplier returns, RMAs, replacements, credits, refunds and "
         "rework with purchase-order and stock traceability."
     )
-    VERSION = "0.1.1"
+    VERSION = "0.1.2"
     AUTHOR = "Per Vices Corporation"
     WEBSITE = "https://github.com/bmalatest-dev/inventree-supplier-return"
     LICENSE = "MIT"
