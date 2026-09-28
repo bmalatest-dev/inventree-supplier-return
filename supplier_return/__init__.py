@@ -707,7 +707,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.4'
+    VERSION = '0.5.5'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -730,13 +730,9 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     }
 
     def get_ui_routes(self, request, context, **kwargs):
-        return [{
-            'key': 'supplier-return-queue',
-            'title': _('Supplier Returns'),
-            'source': self.plugin_static_file('supplier_return_v054.js:getSupplierReturnQueue'),
-            'options': {'path': 'returns'},
-            'context': {'plugin_base': f'/plugin/{self.SLUG}', 'plugin_version': self.VERSION},
-        }]
+        # The central queue is server-hosted at /plugin/supplier-return/queue/.
+        # Do not expose the unused React route which resolves to Page Not Found.
+        return []
 
     def get_ui_features(self, feature_type, context, request, **kwargs):
         """Return UI features, with explicit route dispatch for InvenTree 1.6.

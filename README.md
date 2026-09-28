@@ -1,6 +1,10 @@
-# InvenTree Supplier Return v0.5.4
+# InvenTree Supplier Return v0.5.5
 
 Supplier-return / RMA workflow for InvenTree.
+
+## v0.5.5
+
+Makes the working server-hosted Supplier Returns queue the sole central queue entry point. The navigation remains pointed at `/plugin/supplier-return/queue/`, and the unused React plugin route is no longer advertised, preventing the stale `/web/plugin/supplier-return/returns` Page Not Found path from competing with the working queue. Supplier display behavior is unchanged. No database migration is required.
 
 ## v0.5.4
 
