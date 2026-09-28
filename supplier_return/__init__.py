@@ -653,7 +653,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.1'
+    VERSION = '0.5.2'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -678,10 +678,28 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
         return [{
             'key': 'supplier-return-queue',
             'title': _('Supplier Returns'),
-            'source': self.plugin_static_file('supplier_return_v051.js:getSupplierReturnQueue'),
+            'source': self.plugin_static_file('supplier_return_v052.js:getSupplierReturnQueue'),
             'options': {'path': 'returns'},
             'context': {'plugin_base': f'/plugin/{self.SLUG}', 'plugin_version': self.VERSION},
         }]
+
+    def get_ui_features(self, feature_type, context, request, **kwargs):
+        """Return UI features, with explicit route dispatch for InvenTree 1.6.
+
+        Some 1.6 development builds expose the ``route`` feature endpoint but the
+        base UserInterfaceMixin dispatcher does not forward that feature type to
+        ``get_ui_routes``.  Handle it explicitly while delegating every other
+        feature type to InvenTree's normal dispatcher.
+        """
+        value = getattr(feature_type, 'value', feature_type)
+        name = getattr(feature_type, 'name', '')
+
+        if str(value).lower() == 'route' or str(name).lower() == 'route':
+            return self.get_ui_routes(request, context, **kwargs)
+
+        return super().get_ui_features(
+            feature_type=feature_type, context=context, request=request, **kwargs
+        )
 
     def get_ui_navigation_items(self, request, context, **kwargs):
         return [{
@@ -701,7 +719,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v051.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v052.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,
