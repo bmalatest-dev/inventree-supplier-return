@@ -1,12 +1,6 @@
-# InvenTree Supplier Return v0.5.6
+# InvenTree Supplier Return v0.5.5
 
 Supplier-return / RMA workflow for InvenTree.
-
-## v0.5.6
-
-Fixes the Supplier Returns header navigation by moving the central queue link from `UserInterfaceMixin` navigation to InvenTree's server-side `NavigationMixin`. The navigation entry now resolves the named plugin URL `plugin:supplier-return:queue`, which targets the proven `/plugin/supplier-return/queue/` Django page without the React frontend automatically prepending `/web/`.
-
-The unused React queue route remains disabled. Supplier Return data, workflow logic, and database models are unchanged. No database migration is required.
 
 ## v0.5.5
 
