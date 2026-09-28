@@ -653,7 +653,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.0'
+    VERSION = '0.5.1'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -678,7 +678,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
         return [{
             'key': 'supplier-return-queue',
             'title': _('Supplier Returns'),
-            'source': self.plugin_static_file('supplier_return_v050.js:renderSupplierReturnQueue'),
+            'source': self.plugin_static_file('supplier_return_v051.js:getSupplierReturnQueue'),
             'options': {'path': 'returns'},
             'context': {'plugin_base': f'/plugin/{self.SLUG}', 'plugin_version': self.VERSION},
         }]
@@ -688,7 +688,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-nav',
             'title': _('Supplier Returns'),
             'icon': 'ti:truck-return:outline',
-            'options': {'url': f'/web/plugin/{self.SLUG}/returns'},
+            'options': {'url': f'plugin/{self.SLUG}/returns'},
         }]
 
     def get_ui_panels(self, request, context, **kwargs):
@@ -701,7 +701,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v050.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v051.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,
