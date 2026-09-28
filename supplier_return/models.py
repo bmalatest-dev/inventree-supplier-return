@@ -6,6 +6,8 @@ class SupplierReturn(models.Model):
     class Status(models.TextChoices):
         DRAFT = 'DRAFT', 'Draft'
         READY = 'READY', 'Ready to Return'
+        SHIPPED = 'SHIPPED', 'Shipped / Awaiting Resolution'
+        CLOSED = 'CLOSED', 'Closed'
         CANCELLED = 'CANCELLED', 'Cancelled'
 
     reference = models.CharField(max_length=32, unique=True, blank=True)
@@ -53,7 +55,12 @@ class SupplierReturnLine(models.Model):
 
     supplier_return = models.ForeignKey(SupplierReturn, related_name='lines', on_delete=models.CASCADE)
     purchase_order_line_id = models.PositiveIntegerField(null=True, blank=True)
+    # Original stock item selected while the SR is a draft.
     stock_item_id = models.PositiveIntegerField(db_index=True)
+    # Stock item physically segregated for the return. For a partial return this is
+    # the split child item; for a full return this is the original stock item.
+    return_stock_item_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    original_location_id = models.PositiveIntegerField(null=True, blank=True)
     quantity = models.DecimalField(max_digits=25, decimal_places=10)
     reason = models.CharField(max_length=32, choices=Reason.choices)
     requested_resolution = models.CharField(max_length=32, choices=Resolution.choices)
@@ -61,6 +68,34 @@ class SupplierReturnLine(models.Model):
 
     class Meta:
         ordering = ['pk']
+
+    @classmethod
+    def check_user_permission(cls, user, permission):
+        return bool(user and user.is_authenticated)
+
+
+class SupplierReturnResolution(models.Model):
+    """Actual quantity-level outcome for a return line (used by the receiving workflow)."""
+
+    class Resolution(models.TextChoices):
+        REPLACEMENT = 'REPLACEMENT', 'Replacement'
+        CREDIT = 'CREDIT', 'Credit'
+        REFUND = 'REFUND', 'Refund'
+        REWORK = 'REWORK', 'Repair / Rework'
+        OTHER = 'OTHER', 'Other'
+
+    line = models.ForeignKey(SupplierReturnLine, related_name='actual_resolutions', on_delete=models.CASCADE)
+    resolution = models.CharField(max_length=32, choices=Resolution.choices)
+    quantity = models.DecimalField(max_digits=25, decimal_places=10)
+    replacement_stock_item_id = models.PositiveIntegerField(null=True, blank=True)
+    reference = models.CharField(max_length=255, blank=True)
+    amount = models.DecimalField(max_digits=25, decimal_places=6, null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at', 'pk']
 
     @classmethod
     def check_user_permission(cls, user, permission):

@@ -1,26 +1,20 @@
-# InvenTree Supplier Return — v0.2.3
+# InvenTree Supplier Return — V0.3.0
 
-## v0.2.3 draft-workflow UI milestone
+Supplier-return / purchasing-RMA workflow for InvenTree.
 
-This release keeps the working v0.2.2 URL/App integration and exposes the persisted draft workflow in the PO / Stock Item panel.
+## V0.3.0 milestone
 
-### Changes
-- Uses a new static module filename (`supplier_return_v023.js`) so the old V0.1.1 milestone panel cannot be reused from a stale collected/static browser asset.
-- Displays existing Supplier Returns for the originating PO.
-- Adds **Create Supplier Return** with stock selection, quantity, controlled reason, requested resolution, line notes, holding location, supplier RMA, Redmine issue and header notes.
-- Adds **Incorrect Quantity** as a controlled return reason and renames **Incorrect Material** to **Incorrect Item**.
-- Saves a persistent Draft (`SR-####`) only. No stock is moved in this release.
-- Stock Item context continues to show Supplier Return history for its originating PO.
+- Saved DRAFT Supplier Returns are fully editable.
+- Create and Edit are distinct actions; editing updates the existing SR.
+- Human-readable quantities (e.g. `300`, not `3E+2`).
+- `Mark Ready to Return` performs real InvenTree stock segregation:
+  - full quantity: moves the selected stock item to the chosen holding location;
+  - partial quantity: uses InvenTree's native stock split operation and places the split child in the holding location.
+- The Ready transition is wrapped in a database transaction and locks the relevant SR / stock rows.
+- Each line records the original stock item, original location, and the stock item physically segregated for return.
+- Once READY, stock identity and returned quantity are locked, while Supplier RMA, Redmine issue, notes, and Requested Resolution remain editable.
+- Adds the data model for future quantity-level Actual Resolution records (e.g. 300 returned -> 200 replacement + 100 credit). Actual-resolution receiving/accounting UI is intentionally not enabled yet.
 
-### Intended test
-1. Install/update the plugin and collect plugin static files.
-2. Apply migrations and restart InvenTree.
-3. Open a completed PO which has received stock.
-4. Open **Supplier Returns** and verify the real draft UI appears (not the V0.1.1 milestone text).
-5. Click **Create Supplier Return** and select one or more stock items received against that PO.
-6. Enter quantity, reason, requested resolution, holding location and optional RMA / Redmine / notes.
-7. Click **Save Draft**.
-8. Confirm an `SR-####` record appears after reload.
-9. Open one of the selected Stock Items and confirm the same PO Supplier Return history is visible.
+## Safety / test note
 
-No stock movement is performed by v0.2.3. `READY` remains a workflow state only.
+V0.3.0 is the first version which intentionally changes InvenTree inventory. Test on a non-production InvenTree instance first. The `Mark Ready to Return` confirmation explicitly identifies the quantities which will be moved.

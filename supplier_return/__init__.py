@@ -1,7 +1,9 @@
-"""InvenTree Supplier Return plugin - V0.2.3."""
+"""InvenTree Supplier Return plugin - V0.3.0."""
 from decimal import Decimal, InvalidOperation
 import json
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.http import JsonResponse
 from django.urls import path
 from django.utils.translation import gettext_lazy as _
@@ -28,6 +30,16 @@ def _stock_po(stock):
     return None
 
 
+def _qty(value):
+    """Human-friendly decimal string (300, 1.25; never 3E+2)."""
+    try:
+        d = Decimal(value)
+        s = format(d, 'f')
+        return s.rstrip('0').rstrip('.') if '.' in s else s
+    except Exception:
+        return str(value)
+
+
 def _serialize(obj):
     return {
         'id': obj.pk,
@@ -43,15 +55,99 @@ def _serialize(obj):
             {
                 'id': x.pk,
                 'stock_item_id': x.stock_item_id,
+                'return_stock_item_id': x.return_stock_item_id,
+                'original_location_id': x.original_location_id,
                 'purchase_order_line_id': x.purchase_order_line_id,
-                'quantity': str(x.quantity.normalize()),
+                'quantity': _qty(x.quantity),
                 'reason': x.reason,
                 'requested_resolution': x.requested_resolution,
                 'notes': x.notes,
+                'actual_resolutions': [
+                    {
+                        'id': r.pk,
+                        'resolution': r.resolution,
+                        'quantity': _qty(r.quantity),
+                        'replacement_stock_item_id': r.replacement_stock_item_id,
+                        'reference': r.reference,
+                        'amount': str(r.amount) if r.amount is not None else None,
+                        'notes': r.notes,
+                    }
+                    for r in x.actual_resolutions.all()
+                ],
             }
             for x in obj.lines.all()
         ],
     }
+
+
+def _validate_lines(po_id, lines, exclude_return_id=None):
+    from .models import SupplierReturnLine
+    from stock.models import StockItem
+
+    if not lines:
+        raise ValueError('At least one return line is required.')
+
+    validated = []
+    seen = set()
+    for raw in lines:
+        try:
+            stock_id = int(raw.get('stock_item_id'))
+            stock = StockItem.objects.get(pk=stock_id)
+            qty = Decimal(str(raw.get('quantity')))
+        except (StockItem.DoesNotExist, ValueError, TypeError, InvalidOperation):
+            raise ValueError('Invalid stock item or quantity.')
+
+        if stock_id in seen:
+            raise ValueError(f'Stock #{stock_id} can only appear once in a Supplier Return.')
+        seen.add(stock_id)
+
+        if qty <= 0 or qty > stock.quantity:
+            raise ValueError(f'Return quantity for stock #{stock.pk} must be greater than zero and no more than {_qty(stock.quantity)}.')
+
+        stock_po = _stock_po(stock)
+        if not stock_po or stock_po.pk != po_id:
+            raise ValueError(f'Stock #{stock.pk} did not originate from PO #{po_id}.')
+
+        committed_qs = SupplierReturnLine.objects.filter(
+            stock_item_id=stock.pk,
+            supplier_return__status__in=['DRAFT', 'READY', 'SHIPPED'],
+        )
+        if exclude_return_id:
+            committed_qs = committed_qs.exclude(supplier_return_id=exclude_return_id)
+        committed = sum((x.quantity for x in committed_qs), Decimal('0'))
+        if committed + qty > stock.quantity:
+            raise ValueError(f'Stock #{stock.pk} does not have enough uncommitted quantity for this return.')
+
+        reason = raw.get('reason')
+        resolution = raw.get('requested_resolution')
+        if reason not in SupplierReturnLine.Reason.values or resolution not in SupplierReturnLine.Resolution.values:
+            raise ValueError('A valid reason and requested resolution are required.')
+        validated.append((stock, qty, reason, resolution, raw.get('notes', '')))
+    return validated
+
+
+def _apply_draft(obj, data, validated):
+    """Update an existing DRAFT in-place."""
+    from .models import SupplierReturnLine
+
+    obj.supplier_rma = data.get('supplier_rma', '')
+    obj.holding_location_id = data.get('holding_location_id') or None
+    obj.redmine_issue = data.get('redmine_issue', '')
+    obj.notes = data.get('notes', '')
+    obj.save(update_fields=['supplier_rma', 'holding_location_id', 'redmine_issue', 'notes', 'updated_at'])
+
+    obj.lines.all().delete()
+    for stock, qty, reason, resolution, notes in validated:
+        line = getattr(stock, 'purchase_order_line', None)
+        SupplierReturnLine.objects.create(
+            supplier_return=obj,
+            purchase_order_line_id=getattr(line, 'pk', None),
+            stock_item_id=stock.pk,
+            quantity=qty,
+            reason=reason,
+            requested_resolution=resolution,
+            notes=notes,
+        )
 
 
 @require_http_methods(['GET'])
@@ -75,7 +171,7 @@ def context_view(request, model, pk):
 
     returns = [
         _serialize(x)
-        for x in SupplierReturn.objects.filter(purchase_order_id=po_id).prefetch_related('lines')
+        for x in SupplierReturn.objects.filter(purchase_order_id=po_id).prefetch_related('lines__actual_resolutions')
     ]
 
     eligible = []
@@ -89,10 +185,11 @@ def context_view(request, model, pk):
         eligible.append({
             'id': item.pk,
             'part': getattr(part, 'name', '') or getattr(part, 'IPN', '') or str(getattr(item, 'part_id', '')),
-            'quantity': str(item.quantity),
+            'quantity': _qty(item.quantity),
             'serial': getattr(item, 'serial', None),
             'batch': getattr(item, 'batch', None),
             'location': str(getattr(item, 'location', '') or ''),
+            'location_id': getattr(item, 'location_id', None),
         })
 
     return JsonResponse({
@@ -105,11 +202,12 @@ def context_view(request, model, pk):
 
 @require_http_methods(['GET', 'POST'])
 def returns_view(request):
-    from .models import SupplierReturn, SupplierReturnLine, SupplierReturnEvent
+    from .models import SupplierReturn, SupplierReturnEvent
+    from order.models import PurchaseOrder
 
     if request.method == 'GET':
         po_id = request.GET.get('purchase_order_id')
-        qs = SupplierReturn.objects.all().prefetch_related('lines')
+        qs = SupplierReturn.objects.all().prefetch_related('lines__actual_resolutions')
         if po_id:
             qs = qs.filter(purchase_order_id=po_id)
         return JsonResponse({'results': [_serialize(x) for x in qs]})
@@ -120,85 +218,36 @@ def returns_view(request):
     except Exception:
         return JsonResponse({'error': 'A purchase order is required.'}, status=400)
 
-    lines = data.get('lines') or []
-    if not lines:
-        return JsonResponse({'error': 'At least one return line is required.'}, status=400)
-
-    from order.models import PurchaseOrder
-    from stock.models import StockItem
-
-    try:
-        PurchaseOrder.objects.get(pk=po_id)
-    except PurchaseOrder.DoesNotExist:
+    if not PurchaseOrder.objects.filter(pk=po_id).exists():
         return JsonResponse({'error': 'Purchase order not found.'}, status=404)
 
-    validated = []
-    for raw in lines:
-        try:
-            stock = StockItem.objects.get(pk=int(raw.get('stock_item_id')))
-            qty = Decimal(str(raw.get('quantity')))
-        except (StockItem.DoesNotExist, ValueError, TypeError, InvalidOperation):
-            return JsonResponse({'error': 'Invalid stock item or quantity.'}, status=400)
+    try:
+        validated = _validate_lines(po_id, data.get('lines') or [])
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
 
-        if qty <= 0 or qty > stock.quantity:
-            return JsonResponse({'error': f'Return quantity for stock #{stock.pk} must be greater than zero and no more than {stock.quantity}.'}, status=400)
-
-        stock_po = _stock_po(stock)
-        if not stock_po or stock_po.pk != po_id:
-            return JsonResponse({'error': f'Stock #{stock.pk} did not originate from PO #{po_id}.'}, status=400)
-
-        committed = sum(
-            (x.quantity for x in SupplierReturnLine.objects.filter(
-                stock_item_id=stock.pk,
-                supplier_return__status__in=['DRAFT', 'READY'],
-            )),
-            Decimal('0'),
+    with transaction.atomic():
+        obj = SupplierReturn.objects.create(
+            purchase_order_id=po_id,
+            created_by=request.user if request.user.is_authenticated else None,
         )
-        if committed + qty > stock.quantity:
-            return JsonResponse({'error': f'Stock #{stock.pk} does not have enough uncommitted quantity for this return.'}, status=400)
-
-        reason = raw.get('reason')
-        resolution = raw.get('requested_resolution')
-        if reason not in SupplierReturnLine.Reason.values or resolution not in SupplierReturnLine.Resolution.values:
-            return JsonResponse({'error': 'A valid reason and requested resolution are required.'}, status=400)
-        validated.append((stock, qty, reason, resolution, raw.get('notes', '')))
-
-    obj = SupplierReturn.objects.create(
-        purchase_order_id=po_id,
-        supplier_rma=data.get('supplier_rma', ''),
-        holding_location_id=data.get('holding_location_id') or None,
-        redmine_issue=data.get('redmine_issue', ''),
-        notes=data.get('notes', ''),
-        created_by=request.user if request.user.is_authenticated else None,
-    )
-
-    for stock, qty, reason, resolution, notes in validated:
-        line = getattr(stock, 'purchase_order_line', None)
-        SupplierReturnLine.objects.create(
+        _apply_draft(obj, data, validated)
+        SupplierReturnEvent.objects.create(
             supplier_return=obj,
-            purchase_order_line_id=getattr(line, 'pk', None),
-            stock_item_id=stock.pk,
-            quantity=qty,
-            reason=reason,
-            requested_resolution=resolution,
-            notes=notes,
+            event_type='CREATED',
+            user=request.user if request.user.is_authenticated else None,
+            notes='Supplier Return draft created',
         )
-
-    SupplierReturnEvent.objects.create(
-        supplier_return=obj,
-        event_type='CREATED',
-        user=request.user if request.user.is_authenticated else None,
-        notes='Supplier Return draft created',
-    )
     return JsonResponse(_serialize(obj), status=201)
 
 
 @require_http_methods(['GET', 'PATCH'])
 def return_detail_view(request, pk):
     from .models import SupplierReturn, SupplierReturnEvent
+    from stock.models import StockItem, StockLocation
 
     try:
-        obj = SupplierReturn.objects.prefetch_related('lines').get(pk=pk)
+        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions').get(pk=pk)
     except SupplierReturn.DoesNotExist:
         return JsonResponse({'error': 'Supplier Return not found.'}, status=404)
 
@@ -206,19 +255,120 @@ def return_detail_view(request, pk):
         return JsonResponse(_serialize(obj))
 
     data = _json_body(request)
-    new_status = data.get('status')
-    if new_status:
-        allowed = {'DRAFT': {'READY', 'CANCELLED'}, 'READY': {'CANCELLED'}, 'CANCELLED': set()}
-        if new_status not in allowed.get(obj.status, set()):
-            return JsonResponse({'error': f'Cannot change {obj.status} to {new_status}.'}, status=400)
-        obj.status = new_status
-        obj.save(update_fields=['status', 'updated_at'])
-        SupplierReturnEvent.objects.create(
-            supplier_return=obj,
-            event_type=f'STATUS_{new_status}',
-            user=request.user if request.user.is_authenticated else None,
-        )
-    return JsonResponse(_serialize(obj))
+    action = data.get('action')
+
+    # DRAFT editing: everything remains editable and no stock changes occur.
+    if action == 'save_draft':
+        if obj.status != 'DRAFT':
+            return JsonResponse({'error': 'Only a Draft Supplier Return can be fully edited.'}, status=400)
+        try:
+            validated = _validate_lines(obj.purchase_order_id, data.get('lines') or [], exclude_return_id=obj.pk)
+        except ValueError as exc:
+            return JsonResponse({'error': str(exc)}, status=400)
+        with transaction.atomic():
+            _apply_draft(obj, data, validated)
+            SupplierReturnEvent.objects.create(
+                supplier_return=obj,
+                event_type='DRAFT_UPDATED',
+                user=request.user if request.user.is_authenticated else None,
+                notes='Supplier Return draft updated',
+            )
+        obj.refresh_from_db()
+        return JsonResponse(_serialize(obj))
+
+    # READY: physically segregate the selected quantities into the holding location.
+    if action == 'mark_ready':
+        if obj.status != 'DRAFT':
+            return JsonResponse({'error': 'Only a Draft Supplier Return can be marked Ready to Return.'}, status=400)
+        holding_id = data.get('holding_location_id') or obj.holding_location_id
+        if not holding_id:
+            return JsonResponse({'error': 'A holding location is required before stock can be marked Ready to Return.'}, status=400)
+        try:
+            holding = StockLocation.objects.get(pk=int(holding_id))
+        except (StockLocation.DoesNotExist, TypeError, ValueError):
+            return JsonResponse({'error': 'The selected holding location is invalid.'}, status=400)
+
+        user = request.user if request.user.is_authenticated else None
+        try:
+            with transaction.atomic():
+                # Lock the SR and stock rows to prevent double-commit / concurrent quantity changes.
+                obj = SupplierReturn.objects.select_for_update().get(pk=obj.pk)
+                if obj.status != 'DRAFT':
+                    raise ValueError('This Supplier Return is no longer a Draft.')
+                lines = list(obj.lines.select_for_update())
+                if not lines:
+                    raise ValueError('At least one return line is required.')
+
+                # Revalidate all quantities immediately before changing stock.
+                locked = []
+                for line in lines:
+                    stock = StockItem.objects.select_for_update().get(pk=line.stock_item_id)
+                    if line.quantity <= 0 or line.quantity > stock.quantity:
+                        raise ValueError(f'Stock #{stock.pk} no longer has {_qty(line.quantity)} available for this return.')
+                    stock_po = _stock_po(stock)
+                    if not stock_po or stock_po.pk != obj.purchase_order_id:
+                        raise ValueError(f'Stock #{stock.pk} is no longer linked to the expected purchase order.')
+                    locked.append((line, stock))
+
+                for line, stock in locked:
+                    line.original_location_id = stock.location_id
+                    note = f'{obj.reference}: segregated for supplier return'
+                    if line.quantity < stock.quantity:
+                        returned_stock = stock.splitStock(line.quantity, holding, user, notes=note)
+                        if returned_stock is None or returned_stock.pk == stock.pk:
+                            raise ValueError(f'Could not split Stock #{stock.pk} for the supplier return.')
+                    else:
+                        ok = stock.move(holding, note, user, quantity=line.quantity)
+                        if ok is False:
+                            raise ValueError(f'Could not move Stock #{stock.pk} to the holding location.')
+                        returned_stock = stock
+
+                    line.return_stock_item_id = returned_stock.pk
+                    line.save(update_fields=['original_location_id', 'return_stock_item_id'])
+
+                obj.holding_location_id = holding.pk
+                obj.status = 'READY'
+                obj.save(update_fields=['holding_location_id', 'status', 'updated_at'])
+                SupplierReturnEvent.objects.create(
+                    supplier_return=obj,
+                    event_type='STATUS_READY',
+                    user=user,
+                    notes=f'Stock segregated to holding location #{holding.pk}',
+                )
+        except (ValueError, DjangoValidationError) as exc:
+            message = getattr(exc, 'message', None) or '; '.join(getattr(exc, 'messages', [])) or str(exc)
+            return JsonResponse({'error': message}, status=400)
+
+        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions').get(pk=obj.pk)
+        return JsonResponse(_serialize(obj))
+
+    # After READY, requested resolution / admin fields may still evolve. Returned stock and qty stay locked.
+    if action == 'update_admin':
+        if obj.status not in {'READY', 'SHIPPED'}:
+            return JsonResponse({'error': 'Administrative updates are available after the return is Ready to Return.'}, status=400)
+        obj.supplier_rma = data.get('supplier_rma', obj.supplier_rma)
+        obj.redmine_issue = data.get('redmine_issue', obj.redmine_issue)
+        obj.notes = data.get('notes', obj.notes)
+        requested = data.get('requested_resolutions') or {}
+        with transaction.atomic():
+            obj.save(update_fields=['supplier_rma', 'redmine_issue', 'notes', 'updated_at'])
+            for line in obj.lines.all():
+                value = requested.get(str(line.pk), requested.get(line.pk))
+                if value:
+                    from .models import SupplierReturnLine
+                    if value not in SupplierReturnLine.Resolution.values:
+                        return JsonResponse({'error': 'Invalid requested resolution.'}, status=400)
+                    line.requested_resolution = value
+                    line.save(update_fields=['requested_resolution'])
+            SupplierReturnEvent.objects.create(
+                supplier_return=obj,
+                event_type='ADMIN_UPDATED',
+                user=request.user if request.user.is_authenticated else None,
+                notes='Supplier Return administrative details updated',
+            )
+        return JsonResponse(_serialize(obj))
+
+    return JsonResponse({'error': 'Unknown Supplier Return action.'}, status=400)
 
 
 class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixin, InvenTreePlugin):
@@ -226,13 +376,12 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.2.3'
+    VERSION = '0.3.0'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
 
     def setup_urls(self):
-        """Register plugin-owned API routes with InvenTree's UrlsMixin."""
         return [
             path('context/<str:model>/<int:pk>/', context_view, name='context'),
             path('returns/', returns_view, name='returns'),
@@ -241,8 +390,8 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
 
     SETTINGS = {
         'DEFAULT_HOLDING_LOCATION': {'name': _('Default return holding location'), 'description': _('Optional default; the user can override it for each return.'), 'model': 'stock.stocklocation', 'required': False},
-        'DEFAULT_EXTERNAL_LOCATION': {'name': _('Default supplier / external location'), 'description': _('Reserved for the shipping workflow in a later version.'), 'model': 'stock.stocklocation', 'required': False},
-        'DEFAULT_RECEIVING_LOCATION': {'name': _('Default return receiving location'), 'description': _('Reserved for the receiving workflow in a later version.'), 'model': 'stock.stocklocation', 'required': False},
+        'DEFAULT_EXTERNAL_LOCATION': {'name': _('Default supplier / external location'), 'description': _('Reserved for the shipping workflow.'), 'model': 'stock.stocklocation', 'required': False},
+        'DEFAULT_RECEIVING_LOCATION': {'name': _('Default return receiving location'), 'description': _('Reserved for the receiving workflow.'), 'model': 'stock.stocklocation', 'required': False},
     }
 
     def get_ui_panels(self, request, context, **kwargs):
@@ -255,7 +404,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v023.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v030.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,
