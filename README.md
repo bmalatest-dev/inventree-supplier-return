@@ -1,26 +1,33 @@
-# InvenTree Supplier Return
+# InvenTree Supplier Return — v0.2.0
 
-V0.1.2 is a deliberately small compatibility milestone for the Per Vices InvenTree 1.6.0-dev test environment.
+First persisted workflow build for InvenTree 1.6.0-dev / API 538.
 
-## Goal of this build
+## Included
 
-Confirm all of the following before adding database models and stock-changing operations:
+- Supplier Returns panel on Purchase Orders and Stock Items
+- Persistent `SupplierReturn`, `SupplierReturnLine`, and `SupplierReturnEvent` models
+- Automatic `SR-0001`, `SR-0002`, ... references
+- One Supplier Return per originating PO; multiple stock lines from that PO are supported
+- Draft creation with supplier RMA, Redmine issue, holding location, notes, quantity, reason, and requested resolution
+- Server-side validation that returned stock originates from the selected PO, quantities are positive / available, and quantity is not already committed to another open Supplier Return
+- Draft / Ready to Return / Cancelled status model
+- No stock movement yet: marking Ready is intentionally only a workflow state in v0.2.0
 
-1. InvenTree loads the plugin normally and displays its metadata.
-2. Plugin version displays as `0.1.2`.
-3. Description and author are visible in Plugin Management.
-4. A **Supplier Returns** panel appears on a Purchase Order.
-5. A **Supplier Returns** panel appears on a Stock Item.
-6. The panel identifies the target model / ID and reports that V0.1.2 loaded.
+## Upgrade / install
 
-## Planned workflow after this milestone
+Update the plugin from GitHub, then run the normal InvenTree plugin/update process so the new Django migration is applied and plugin static files are collected. Restart InvenTree afterwards.
 
-Purchase Order -> Supplier Return -> Holding Location -> Ship to Supplier -> Receive / Inspect -> Resolve
+Because v0.2.0 introduces `AppMixin` database models, ensure InvenTree application plugins are enabled in the instance configuration. Test only on a non-production instance first.
 
-The full workflow will support multiple lines from one PO, partial returns, RMA/rework, replacement stock, credits/refunds, user-selected locations, Redmine issue reference, and chained SR-0001 / SR-0002 traceability.
+## Test
 
-## Upgrade test
+1. Open a PO with stock already received against it.
+2. Open **Supplier Returns**.
+3. Click **Create Supplier Return**.
+4. Select one or more received stock items from that PO.
+5. Enter quantity, reason, requested resolution and holding location.
+6. Save Draft.
+7. Confirm an `SR-####` record appears after reload.
+8. Open one of those Stock Items and confirm the same PO Supplier Return history is visible.
 
-Update the existing GitHub repository to this version, then run the same plugin update method used for the other Per Vices plugins. Restart the InvenTree application container after the update if required by the local Docker setup.
-
-Do not run production stock movements with this build. V0.1.2 is a registration and UI smoke test only.
+v0.2.0 does **not** move stock to the holding location. That is the next milestone after persistence and validation are confirmed.
