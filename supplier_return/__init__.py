@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.2.1."""
+"""InvenTree Supplier Return plugin - V0.2.2."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -226,17 +226,18 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.2.1'
+    VERSION = '0.2.2'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
 
-    # Use the documented URLS constant so routes are registered when the plugin is initialized.
-    URLS = [
-        path('context/<str:model>/<int:pk>/', context_view, name='context'),
-        path('returns/', returns_view, name='returns'),
-        path('returns/<int:pk>/', return_detail_view, name='return-detail'),
-    ]
+    def setup_urls(self):
+        """Register plugin-owned API routes with InvenTree's UrlsMixin."""
+        return [
+            path('context/<str:model>/<int:pk>/', context_view, name='context'),
+            path('returns/', returns_view, name='returns'),
+            path('returns/<int:pk>/', return_detail_view, name='return-detail'),
+        ]
 
     SETTINGS = {
         'DEFAULT_HOLDING_LOCATION': {'name': _('Default return holding location'), 'description': _('Optional default; the user can override it for each return.'), 'model': 'stock.stocklocation', 'required': False},

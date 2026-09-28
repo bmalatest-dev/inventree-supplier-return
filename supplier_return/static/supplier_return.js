@@ -16,7 +16,7 @@ const resolutions=[['REPLACEMENT','Replacement'],['CREDIT','Credit'],['REFUND','
 
 export async function renderSupplierReturnPanel(target, data) {
   const ctx=(data&&data.context)?data.context:(data||{}), base=ctx.plugin_base || '/plugin/supplier-return';
-  if (!target || typeof target.innerHTML === 'undefined') return `Supplier Return V${ctx.plugin_version||'0.2.1'}`;
+  if (!target || typeof target.innerHTML === 'undefined') return `Supplier Return V${ctx.plugin_version||'0.2.2'}`;
   target.innerHTML='<div style="padding:12px">Loading Supplier Returns…</div>';
   try {
     const state=await api(`${base}/context/${ctx.target_model}/${ctx.target_id}/`);

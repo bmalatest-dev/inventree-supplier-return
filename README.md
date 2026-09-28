@@ -1,4 +1,11 @@
-# InvenTree Supplier Return — v0.2.1
+# InvenTree Supplier Return — v0.2.2
+
+## v0.2.2 routing fix
+
+- Registers plugin routes through `UrlsMixin.setup_urls()` rather than a class-level `URLS` list.
+- Keeps the existing context / returns endpoints and v0.2 draft workflow unchanged.
+- No new database migration is included in this release.
+
 
 First persisted workflow build for InvenTree 1.6.0-dev / API 538.
 
@@ -11,13 +18,13 @@ First persisted workflow build for InvenTree 1.6.0-dev / API 538.
 - Draft creation with supplier RMA, Redmine issue, holding location, notes, quantity, reason, and requested resolution
 - Server-side validation that returned stock originates from the selected PO, quantities are positive / available, and quantity is not already committed to another open Supplier Return
 - Draft / Ready to Return / Cancelled status model
-- No stock movement yet: marking Ready is intentionally only a workflow state in v0.2.1
+- No stock movement yet: marking Ready is intentionally only a workflow state in v0.2.2
 
 ## Upgrade / install
 
 Update the plugin from GitHub, then run the normal InvenTree plugin/update process so the new Django migration is applied and plugin static files are collected. Restart InvenTree afterwards.
 
-Because v0.2.1 introduces `AppMixin` database models, ensure InvenTree application plugins are enabled in the instance configuration. Test only on a non-production instance first.
+Because v0.2.2 introduces `AppMixin` database models, ensure InvenTree application plugins are enabled in the instance configuration. Test only on a non-production instance first.
 
 ## Test
 
@@ -30,4 +37,4 @@ Because v0.2.1 introduces `AppMixin` database models, ensure InvenTree applicati
 7. Confirm an `SR-####` record appears after reload.
 8. Open one of those Stock Items and confirm the same PO Supplier Return history is visible.
 
-v0.2.1 does **not** move stock to the holding location. That is the next milestone after persistence and validation are confirmed.
+v0.2.2 does **not** move stock to the holding location. That is the next milestone after persistence and validation are confirmed.
