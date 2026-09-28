@@ -10,7 +10,7 @@ from django.utils.translation import gettext_lazy as _
 from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_http_methods
 from plugin import InvenTreePlugin
-from plugin.mixins import AppMixin, SettingsMixin, UrlsMixin, UserInterfaceMixin
+from plugin.mixins import AppMixin, NavigationMixin, SettingsMixin, UrlsMixin, UserInterfaceMixin
 
 
 def _json_body(request):
@@ -702,15 +702,27 @@ def supplier_return_queue_page(request):
     return HttpResponse(page)
 
 
-class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixin, InvenTreePlugin):
+class SupplierReturnPlugin(NavigationMixin, UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixin, InvenTreePlugin):
     NAME = 'SupplierReturn'
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.5'
+    VERSION = '0.5.6'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
+
+    # Use the server-side NavigationMixin so InvenTree resolves the named
+    # Django plugin URL directly instead of prepending the React /web/ base.
+    NAVIGATION = [
+        {
+            'name': _('Supplier Returns'),
+            'link': 'plugin:supplier-return:queue',
+            'icon': 'ti ti-truck-return',
+        },
+    ]
+    NAVIGATION_TAB_NAME = _('Supplier Returns')
+    NAVIGATION_TAB_ICON = 'ti ti-truck-return'
 
     def setup_urls(self):
         return [
@@ -751,14 +763,6 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
         return super().get_ui_features(
             feature_type=feature_type, context=context, request=request, **kwargs
         )
-
-    def get_ui_navigation_items(self, request, context, **kwargs):
-        return [{
-            'key': 'supplier-return-nav',
-            'title': _('Supplier Returns'),
-            'icon': 'ti:truck-return:outline',
-            'options': {'url': f'/plugin/{self.SLUG}/queue/'},
-        }]
 
     def get_ui_panels(self, request, context, **kwargs):
         context = context or {}
