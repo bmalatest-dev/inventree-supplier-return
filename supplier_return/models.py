@@ -7,6 +7,7 @@ class SupplierReturn(models.Model):
         DRAFT = 'DRAFT', 'Draft'
         READY = 'READY', 'Ready to Return'
         SHIPPED = 'SHIPPED', 'Shipped / Awaiting Resolution'
+        RESOLUTION = 'RESOLUTION', 'Resolution in Progress'
         CLOSED = 'CLOSED', 'Closed'
         CANCELLED = 'CANCELLED', 'Cancelled'
 
@@ -94,6 +95,7 @@ class SupplierReturnResolution(models.Model):
     quantity = models.DecimalField(max_digits=25, decimal_places=10)
     replacement_stock_item_id = models.PositiveIntegerField(null=True, blank=True)
     reference = models.CharField(max_length=255, blank=True)
+    resolution_date = models.DateField(null=True, blank=True)
     amount = models.DecimalField(max_digits=25, decimal_places=6, null=True, blank=True)
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
@@ -101,6 +103,25 @@ class SupplierReturnResolution(models.Model):
 
     class Meta:
         ordering = ['created_at', 'pk']
+
+    @classmethod
+    def check_user_permission(cls, user, permission):
+        return bool(user and user.is_authenticated)
+
+
+class SupplierReturnReceipt(models.Model):
+    """Physical receipt against a replacement / rework resolution."""
+
+    resolution = models.ForeignKey(SupplierReturnResolution, related_name='receipts', on_delete=models.CASCADE)
+    quantity = models.DecimalField(max_digits=25, decimal_places=10)
+    stock_item_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    location_id = models.PositiveIntegerField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['received_at', 'pk']
 
     @classmethod
     def check_user_permission(cls, user, permission):

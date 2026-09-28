@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.4.0."""
+"""InvenTree Supplier Return plugin - V0.5.0."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -42,10 +42,18 @@ def _qty(value):
 
 
 def _serialize(obj):
+    supplier_name = ''
+    try:
+        from order.models import PurchaseOrder
+        po = PurchaseOrder.objects.select_related('supplier').get(pk=obj.purchase_order_id)
+        supplier_name = str(po.supplier) if po.supplier else ''
+    except Exception:
+        pass
     return {
         'id': obj.pk,
         'reference': obj.reference,
         'purchase_order_id': obj.purchase_order_id,
+        'supplier_name': supplier_name,
         'supplier_rma': obj.supplier_rma,
         'status': obj.status,
         'holding_location_id': obj.holding_location_id,
@@ -75,8 +83,17 @@ def _serialize(obj):
                         'quantity': _qty(r.quantity),
                         'replacement_stock_item_id': r.replacement_stock_item_id,
                         'reference': r.reference,
+                        'resolution_date': r.resolution_date.isoformat() if r.resolution_date else None,
                         'amount': str(r.amount) if r.amount is not None else None,
                         'notes': r.notes,
+                        'received_quantity': _qty(sum((z.quantity for z in r.receipts.all()), Decimal('0'))),
+                        'receipts': [
+                            {
+                                'id': z.pk, 'quantity': _qty(z.quantity),
+                                'stock_item_id': z.stock_item_id, 'location_id': z.location_id,
+                                'notes': z.notes, 'received_at': z.received_at.isoformat(),
+                            } for z in r.receipts.all()
+                        ],
                     }
                     for r in x.actual_resolutions.all()
                 ],
@@ -177,7 +194,7 @@ def context_view(request, model, pk):
 
     returns = [
         _serialize(x)
-        for x in SupplierReturn.objects.filter(purchase_order_id=po_id).prefetch_related('lines__actual_resolutions')
+        for x in SupplierReturn.objects.filter(purchase_order_id=po_id).prefetch_related('lines__actual_resolutions__receipts')
     ]
 
     eligible = []
@@ -213,7 +230,7 @@ def returns_view(request):
 
     if request.method == 'GET':
         po_id = request.GET.get('purchase_order_id')
-        qs = SupplierReturn.objects.all().prefetch_related('lines__actual_resolutions')
+        qs = SupplierReturn.objects.all().prefetch_related('lines__actual_resolutions__receipts')
         if po_id:
             qs = qs.filter(purchase_order_id=po_id)
         return JsonResponse({'results': [_serialize(x) for x in qs]})
@@ -253,7 +270,7 @@ def return_detail_view(request, pk):
     from stock.models import StockItem, StockLocation
 
     try:
-        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions').get(pk=pk)
+        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=pk)
     except SupplierReturn.DoesNotExist:
         return JsonResponse({'error': 'Supplier Return not found.'}, status=404)
 
@@ -345,7 +362,7 @@ def return_detail_view(request, pk):
             message = getattr(exc, 'message', None) or '; '.join(getattr(exc, 'messages', [])) or str(exc)
             return JsonResponse({'error': message}, status=400)
 
-        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions').get(pk=obj.pk)
+        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=obj.pk)
         return JsonResponse(_serialize(obj))
 
     # SHIPPED: move all segregated return stock to a user-selected external location.
@@ -417,12 +434,12 @@ def return_detail_view(request, pk):
             message = getattr(exc, 'message', None) or '; '.join(getattr(exc, 'messages', [])) or str(exc)
             return JsonResponse({'error': message}, status=400)
 
-        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions').get(pk=obj.pk)
+        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=obj.pk)
         return JsonResponse(_serialize(obj))
 
     # After READY, requested resolution / admin fields may still evolve. Returned stock and qty stay locked.
     if action == 'update_admin':
-        if obj.status not in {'READY', 'SHIPPED'}:
+        if obj.status not in {'READY', 'SHIPPED', 'RESOLUTION'}:
             return JsonResponse({'error': 'Administrative updates are available after the return is Ready to Return.'}, status=400)
         obj.supplier_rma = data.get('supplier_rma', obj.supplier_rma)
         obj.redmine_issue = data.get('redmine_issue', obj.redmine_issue)
@@ -449,12 +466,194 @@ def return_detail_view(request, pk):
     return JsonResponse({'error': 'Unknown Supplier Return action.'}, status=400)
 
 
+@require_http_methods(['POST'])
+def resolution_view(request, pk):
+    """Record a quantity-level actual supplier resolution."""
+    from .models import SupplierReturn, SupplierReturnEvent, SupplierReturnLine, SupplierReturnResolution
+    from stock.models import StockItem
+
+    try:
+        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=pk)
+    except SupplierReturn.DoesNotExist:
+        return JsonResponse({'error': 'Supplier Return not found.'}, status=404)
+    if obj.status not in {'SHIPPED', 'RESOLUTION'}:
+        return JsonResponse({'error': 'Actual resolution can only be recorded after the return has been shipped.'}, status=400)
+
+    data = _json_body(request)
+    try:
+        line = obj.lines.get(pk=int(data.get('line_id')))
+        qty = Decimal(str(data.get('quantity')))
+    except (SupplierReturnLine.DoesNotExist, ValueError, TypeError, InvalidOperation):
+        return JsonResponse({'error': 'A valid return line and quantity are required.'}, status=400)
+    resolution = data.get('resolution')
+    if resolution not in SupplierReturnResolution.Resolution.values:
+        return JsonResponse({'error': 'A valid actual resolution is required.'}, status=400)
+    if qty <= 0:
+        return JsonResponse({'error': 'Resolution quantity must be greater than zero.'}, status=400)
+    already = sum((r.quantity for r in line.actual_resolutions.all()), Decimal('0'))
+    if already + qty > line.quantity:
+        return JsonResponse({'error': f'Only {_qty(line.quantity - already)} remains unresolved on this line.'}, status=400)
+
+    raw_date = data.get('resolution_date')
+    resolution_date = parse_date(raw_date) if raw_date else None
+    if raw_date and resolution_date is None:
+        return JsonResponse({'error': 'Resolution date is invalid.'}, status=400)
+    amount = data.get('amount')
+    if amount in ('', None):
+        amount = None
+    else:
+        try:
+            amount = Decimal(str(amount))
+        except InvalidOperation:
+            return JsonResponse({'error': 'Amount is invalid.'}, status=400)
+
+    user = request.user if request.user.is_authenticated else None
+    try:
+        with transaction.atomic():
+            obj = SupplierReturn.objects.select_for_update().get(pk=obj.pk)
+            line = SupplierReturnLine.objects.select_for_update().get(pk=line.pk)
+            already = sum((r.quantity for r in line.actual_resolutions.all()), Decimal('0'))
+            if already + qty > line.quantity:
+                raise ValueError('The unresolved quantity changed. Reload and try again.')
+            r = SupplierReturnResolution.objects.create(
+                line=line, resolution=resolution, quantity=qty,
+                resolution_date=resolution_date, reference=(data.get('reference') or '').strip(),
+                amount=amount, notes=(data.get('notes') or '').strip(), created_by=user,
+            )
+            # A credit/refund is a completed disposition: the supplier retains the physical material.
+            if resolution in {'CREDIT', 'REFUND'}:
+                stock = StockItem.objects.select_for_update().get(pk=line.return_stock_item_id)
+                if qty > stock.quantity:
+                    raise ValueError(f'Return Stock #{stock.pk} only has {_qty(stock.quantity)} remaining at the supplier.')
+                ok = stock.take_stock(qty, user, notes=f'{obj.reference}: {resolution.lower()} resolved by supplier')
+                if ok is False and qty < stock.quantity:
+                    raise ValueError(f'Could not remove resolved quantity from Return Stock #{stock.pk}.')
+            obj.status = 'RESOLUTION'
+            obj.save(update_fields=['status', 'updated_at'])
+            SupplierReturnEvent.objects.create(
+                supplier_return=obj, event_type='RESOLUTION_RECORDED', user=user,
+                notes=f'{_qty(qty)} recorded as {resolution} on line #{line.pk}',
+            )
+    except (ValueError, DjangoValidationError, StockItem.DoesNotExist) as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+    obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=obj.pk)
+    return JsonResponse(_serialize(obj), status=201)
+
+
+@require_http_methods(['POST'])
+def receipt_view(request, pk, resolution_pk):
+    """Receive physical replacement or reworked material against an actual resolution."""
+    from .models import SupplierReturn, SupplierReturnEvent, SupplierReturnReceipt, SupplierReturnResolution
+    from stock.models import StockItem, StockLocation
+
+    try:
+        obj = SupplierReturn.objects.get(pk=pk)
+        res = SupplierReturnResolution.objects.select_related('line').get(pk=resolution_pk, line__supplier_return=obj)
+    except (SupplierReturn.DoesNotExist, SupplierReturnResolution.DoesNotExist):
+        return JsonResponse({'error': 'Supplier Return resolution not found.'}, status=404)
+    if res.resolution not in {'REPLACEMENT', 'REWORK'}:
+        return JsonResponse({'error': 'Only replacement or repair/rework resolutions have physical receipts.'}, status=400)
+    data = _json_body(request)
+    try:
+        qty = Decimal(str(data.get('quantity')))
+        location = StockLocation.objects.get(pk=int(data.get('location_id')))
+    except (InvalidOperation, TypeError, ValueError, StockLocation.DoesNotExist):
+        return JsonResponse({'error': 'A valid quantity and receiving location are required.'}, status=400)
+    received = sum((x.quantity for x in res.receipts.all()), Decimal('0'))
+    if qty <= 0 or received + qty > res.quantity:
+        return JsonResponse({'error': f'Receipt quantity must be greater than zero and no more than {_qty(res.quantity - received)}.'}, status=400)
+
+    user = request.user if request.user.is_authenticated else None
+    notes = (data.get('notes') or '').strip()
+    try:
+        with transaction.atomic():
+            res = SupplierReturnResolution.objects.select_for_update().select_related('line').get(pk=res.pk)
+            received = sum((x.quantity for x in res.receipts.all()), Decimal('0'))
+            if received + qty > res.quantity:
+                raise ValueError('The outstanding receipt quantity changed. Reload and try again.')
+            return_stock = StockItem.objects.select_for_update().get(pk=res.line.return_stock_item_id)
+            if qty > return_stock.quantity:
+                raise ValueError(f'Return Stock #{return_stock.pk} only has {_qty(return_stock.quantity)} remaining at the supplier.')
+
+            if res.resolution == 'REWORK':
+                # Same physical material comes back; preserve stock identity when the whole remainder returns.
+                if qty < return_stock.quantity:
+                    received_stock = return_stock.splitStock(qty, location, user, notes=f'{obj.reference}: repaired/reworked material received')
+                else:
+                    ok = return_stock.move(location, f'{obj.reference}: repaired/reworked material received', user, quantity=qty)
+                    if ok is False:
+                        raise ValueError('Could not move reworked material to the receiving location.')
+                    received_stock = return_stock
+            else:
+                # Replacement is new physical material. Do not receive it against the original PO.
+                kwargs = {
+                    'part_id': return_stock.part_id,
+                    'quantity': qty,
+                    'location': location,
+                    'batch': getattr(return_stock, 'batch', None),
+                    'supplier_part_id': getattr(return_stock, 'supplier_part_id', None),
+                    'purchase_price': getattr(return_stock, 'purchase_price', None),
+                    'purchase_price_currency': getattr(return_stock, 'purchase_price_currency', None),
+                }
+                # Drop None values so model defaults are respected.
+                received_stock = StockItem.objects.create(**{k:v for k,v in kwargs.items() if v is not None})
+                try:
+                    received_stock.add_stock(Decimal('0'), user, notes=f'{obj.reference}: replacement stock received')
+                except Exception:
+                    pass
+                ok = return_stock.take_stock(qty, user, notes=f'{obj.reference}: replaced by Stock #{received_stock.pk}')
+                if ok is False and qty < return_stock.quantity:
+                    raise ValueError('Could not reduce returned stock after replacement receipt.')
+
+            SupplierReturnReceipt.objects.create(
+                resolution=res, quantity=qty, stock_item_id=received_stock.pk,
+                location_id=location.pk, notes=notes, created_by=user,
+            )
+            res.replacement_stock_item_id = received_stock.pk
+            res.save(update_fields=['replacement_stock_item_id'])
+            SupplierReturnEvent.objects.create(
+                supplier_return=obj, event_type='RESOLUTION_RECEIVED', user=user,
+                notes=f'Received {_qty(qty)} for {res.resolution} as Stock #{received_stock.pk}',
+            )
+    except (ValueError, DjangoValidationError, StockItem.DoesNotExist) as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+
+    obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=obj.pk)
+    return JsonResponse(_serialize(obj), status=201)
+
+
+@require_http_methods(['POST'])
+def close_return_view(request, pk):
+    from .models import SupplierReturn, SupplierReturnEvent
+    try:
+        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=pk)
+    except SupplierReturn.DoesNotExist:
+        return JsonResponse({'error': 'Supplier Return not found.'}, status=404)
+    for line in obj.lines.all():
+        resolved = sum((r.quantity for r in line.actual_resolutions.all()), Decimal('0'))
+        if resolved != line.quantity:
+            return JsonResponse({'error': f'Line #{line.pk} is not fully resolved ({_qty(resolved)} / {_qty(line.quantity)}).'}, status=400)
+        for r in line.actual_resolutions.all():
+            if r.resolution in {'REPLACEMENT', 'REWORK'}:
+                received = sum((x.quantity for x in r.receipts.all()), Decimal('0'))
+                if received != r.quantity:
+                    return JsonResponse({'error': f'{r.get_resolution_display()} is not fully received ({_qty(received)} / {_qty(r.quantity)}).'}, status=400)
+    obj.status = 'CLOSED'
+    obj.save(update_fields=['status', 'updated_at'])
+    SupplierReturnEvent.objects.create(
+        supplier_return=obj, event_type='STATUS_CLOSED',
+        user=request.user if request.user.is_authenticated else None,
+        notes='Supplier Return fully resolved and closed',
+    )
+    return JsonResponse(_serialize(obj))
+
+
 class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixin, InvenTreePlugin):
     NAME = 'SupplierReturn'
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.4.0'
+    VERSION = '0.5.0'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -464,6 +663,9 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             path('context/<str:model>/<int:pk>/', context_view, name='context'),
             path('returns/', returns_view, name='returns'),
             path('returns/<int:pk>/', return_detail_view, name='return-detail'),
+            path('returns/<int:pk>/resolutions/', resolution_view, name='resolution-create'),
+            path('returns/<int:pk>/resolutions/<int:resolution_pk>/receive/', receipt_view, name='resolution-receive'),
+            path('returns/<int:pk>/close/', close_return_view, name='return-close'),
         ]
 
     SETTINGS = {
@@ -471,6 +673,23 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
         'DEFAULT_EXTERNAL_LOCATION': {'name': _('Default supplier / external location'), 'description': _('Reserved for the shipping workflow.'), 'model': 'stock.stocklocation', 'required': False},
         'DEFAULT_RECEIVING_LOCATION': {'name': _('Default return receiving location'), 'description': _('Reserved for the receiving workflow.'), 'model': 'stock.stocklocation', 'required': False},
     }
+
+    def get_ui_routes(self, request, context, **kwargs):
+        return [{
+            'key': 'supplier-return-queue',
+            'title': _('Supplier Returns'),
+            'source': self.plugin_static_file('supplier_return_v050.js:renderSupplierReturnQueue'),
+            'options': {'path': 'returns'},
+            'context': {'plugin_base': f'/plugin/{self.SLUG}', 'plugin_version': self.VERSION},
+        }]
+
+    def get_ui_navigation_items(self, request, context, **kwargs):
+        return [{
+            'key': 'supplier-return-nav',
+            'title': _('Supplier Returns'),
+            'icon': 'ti:truck-return:outline',
+            'options': {'url': f'/web/plugin/{self.SLUG}/returns'},
+        }]
 
     def get_ui_panels(self, request, context, **kwargs):
         context = context or {}
@@ -482,7 +701,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v040.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v050.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,
