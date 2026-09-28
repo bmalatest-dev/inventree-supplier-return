@@ -4,7 +4,7 @@ import json
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.urls import path
 from django.utils.translation import gettext_lazy as _
 from django.utils.dateparse import parse_date
@@ -648,18 +648,72 @@ def close_return_view(request, pk):
     return JsonResponse(_serialize(obj))
 
 
+def supplier_return_queue_page(request):
+    """Render the central Supplier Returns operational queue."""
+    if not getattr(request.user, 'is_authenticated', False):
+        from django.shortcuts import redirect
+        return redirect('/accounts/login/?next=' + request.path)
+
+    from .models import SupplierReturn
+    import html
+
+    returns = SupplierReturn.objects.prefetch_related(
+        'lines__actual_resolutions__receipts'
+    ).order_by('-created_at')
+
+    rows = []
+    statuses = set()
+    for obj in returns:
+        data = _serialize(obj)
+        total = sum((Decimal(str(line['quantity'])) for line in data['lines']), Decimal('0'))
+        resolved = sum((sum((Decimal(str(r['quantity'])) for r in line.get('actual_resolutions', [])), Decimal('0')) for line in data['lines']), Decimal('0'))
+        received = sum((sum((Decimal(str(r.get('received_quantity') or '0')) for r in line.get('actual_resolutions', [])), Decimal('0')) for line in data['lines']), Decimal('0'))
+        status_label = {'READY':'Ready to Return','SHIPPED':'Awaiting Resolution','RESOLUTION':'Resolution in Progress','CLOSED':'Closed','CANCELLED':'Cancelled','DRAFT':'Draft'}.get(data['status'], data['status'].replace('_', ' ').title())
+        statuses.add((data['status'], status_label))
+        rows.append({**data, 'returned':_qty(total), 'resolved':_qty(resolved), 'outstanding':_qty(max(Decimal('0'), total-resolved)), 'received':_qty(received), 'status_label':status_label})
+
+    def e(v):
+        return html.escape(str(v or ''))
+
+    row_html = ''.join(
+        '<tr data-status="{status}" data-search="{search}">'
+        '<td><b>{ref}</b></td><td>{supplier}</td>'
+        '<td><a href="/web/purchasing/purchase-order/{po}/supplier-return-panel">PO #{po}</a></td>'
+        '<td>{rma}</td><td><b>{status_label}</b></td>'
+        '<td>{returned}</td><td>{resolved}</td><td>{outstanding}</td><td>{received}</td>'
+        '<td>{created}</td><td>{shipped}</td>'
+        '<td><a href="/web/purchasing/purchase-order/{po}/supplier-return-panel">Open</a></td></tr>'.format(
+            status=e(r['status']), search=e((r['reference']+' '+(r['supplier_name'] or '')+' '+(r['supplier_rma'] or '')+' PO-'+str(r['purchase_order_id'])).lower()),
+            ref=e(r['reference']), supplier=e(r['supplier_name']) or '—', po=r['purchase_order_id'], rma=e(r['supplier_rma']) or '—',
+            status_label=e(r['status_label']), returned=e(r['returned']), resolved=e(r['resolved']), outstanding=e(r['outstanding']), received=e(r['received']),
+            created=e((r['created_at'] or '')[:10]), shipped=e(r['shipment_date']) or '—')
+        for r in rows
+    ) or '<tr><td colspan="12">No Supplier Returns found.</td></tr>'
+
+    status_options = ''.join('<option value="{}">{}</option>'.format(e(k),e(v)) for k,v in sorted(statuses, key=lambda x:x[1]))
+    page = """<!doctype html><html><head><meta charset="utf-8"><title>Supplier Returns - InvenTree</title>
+<style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f8f9fa;color:#212529}header{background:#fff;border-bottom:1px solid #ddd;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}main{padding:24px}h1{margin:0 0 4px;font-size:26px}.sub{color:#666;margin:0 0 18px}.controls{display:flex;gap:10px;margin:14px 0;flex-wrap:wrap}input,select{padding:8px 10px;border:1px solid #bbb;border-radius:4px;background:white}table{width:100%;border-collapse:collapse;background:white;border:1px solid #ddd}th,td{padding:9px;border-bottom:1px solid #e5e5e5;text-align:left;white-space:nowrap}th{background:#f1f3f5}a{color:#1971c2;text-decoration:none}a:hover{text-decoration:underline}.back{font-weight:600}</style></head><body>
+<header><div><b>InvenTree</b> / Supplier Returns</div><a class="back" href="/web/">Return to InvenTree</a></header>
+<main><h1>Supplier Returns</h1><p class="sub">Operational queue for supplier returns, RMAs and outstanding resolutions.</p>
+<div class="controls"><label>Status <select id="status"><option value="">All</option>{status_options}</select></label><input id="search" placeholder="Search SR / supplier / RMA / PO"></div>
+<div style="overflow:auto"><table><thead><tr><th>SR</th><th>Supplier</th><th>Original PO</th><th>Supplier RMA</th><th>Status</th><th>Returned</th><th>Resolved</th><th>Outstanding</th><th>Received</th><th>Created</th><th>Shipped</th><th></th></tr></thead><tbody id="rows">{row_html}</tbody></table></div></main>
+<script>const status=document.getElementById('status'),search=document.getElementById('search');function filterRows(){const s=status.value,q=search.value.trim().toLowerCase();document.querySelectorAll('#rows tr[data-status]').forEach(r=>{r.style.display=(!s||r.dataset.status===s)&&(!q||r.dataset.search.includes(q))?'':'none';});}status.addEventListener('change',filterRows);search.addEventListener('input',filterRows);</script></body></html>""".format(status_options=status_options,row_html=row_html)
+    return HttpResponse(page)
+
+
 class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixin, InvenTreePlugin):
     NAME = 'SupplierReturn'
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.2'
+    VERSION = '0.5.3'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
 
     def setup_urls(self):
         return [
+            path('queue/', supplier_return_queue_page, name='queue'),
             path('context/<str:model>/<int:pk>/', context_view, name='context'),
             path('returns/', returns_view, name='returns'),
             path('returns/<int:pk>/', return_detail_view, name='return-detail'),
@@ -678,7 +732,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
         return [{
             'key': 'supplier-return-queue',
             'title': _('Supplier Returns'),
-            'source': self.plugin_static_file('supplier_return_v052.js:getSupplierReturnQueue'),
+            'source': self.plugin_static_file('supplier_return_v053.js:getSupplierReturnQueue'),
             'options': {'path': 'returns'},
             'context': {'plugin_base': f'/plugin/{self.SLUG}', 'plugin_version': self.VERSION},
         }]
@@ -706,7 +760,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-nav',
             'title': _('Supplier Returns'),
             'icon': 'ti:truck-return:outline',
-            'options': {'url': f'plugin/{self.SLUG}/returns'},
+            'options': {'url': f'/plugin/{self.SLUG}/queue/'},
         }]
 
     def get_ui_panels(self, request, context, **kwargs):
@@ -719,7 +773,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v052.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v053.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,
