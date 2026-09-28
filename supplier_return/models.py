@@ -37,7 +37,8 @@ class SupplierReturn(models.Model):
 class SupplierReturnLine(models.Model):
     class Reason(models.TextChoices):
         DEFECTIVE = 'DEFECTIVE', 'Defective / Failed Inspection'
-        INCORRECT = 'INCORRECT', 'Incorrect Material'
+        INCORRECT = 'INCORRECT', 'Incorrect Item'
+        INCORRECT_QTY = 'INCORRECT_QTY', 'Incorrect Quantity'
         DAMAGED = 'DAMAGED', 'Damaged'
         NOT_REQUIRED = 'NOT_REQUIRED', 'No Longer Required'
         ORDERED_ERROR = 'ORDERED_ERROR', 'Ordered in Error'

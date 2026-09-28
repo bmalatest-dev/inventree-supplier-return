@@ -1,40 +1,26 @@
-# InvenTree Supplier Return — v0.2.2
+# InvenTree Supplier Return — v0.2.3
 
-## v0.2.2 routing fix
+## v0.2.3 draft-workflow UI milestone
 
-- Registers plugin routes through `UrlsMixin.setup_urls()` rather than a class-level `URLS` list.
-- Keeps the existing context / returns endpoints and v0.2 draft workflow unchanged.
-- No new database migration is included in this release.
+This release keeps the working v0.2.2 URL/App integration and exposes the persisted draft workflow in the PO / Stock Item panel.
 
+### Changes
+- Uses a new static module filename (`supplier_return_v023.js`) so the old V0.1.1 milestone panel cannot be reused from a stale collected/static browser asset.
+- Displays existing Supplier Returns for the originating PO.
+- Adds **Create Supplier Return** with stock selection, quantity, controlled reason, requested resolution, line notes, holding location, supplier RMA, Redmine issue and header notes.
+- Adds **Incorrect Quantity** as a controlled return reason and renames **Incorrect Material** to **Incorrect Item**.
+- Saves a persistent Draft (`SR-####`) only. No stock is moved in this release.
+- Stock Item context continues to show Supplier Return history for its originating PO.
 
-First persisted workflow build for InvenTree 1.6.0-dev / API 538.
+### Intended test
+1. Install/update the plugin and collect plugin static files.
+2. Apply migrations and restart InvenTree.
+3. Open a completed PO which has received stock.
+4. Open **Supplier Returns** and verify the real draft UI appears (not the V0.1.1 milestone text).
+5. Click **Create Supplier Return** and select one or more stock items received against that PO.
+6. Enter quantity, reason, requested resolution, holding location and optional RMA / Redmine / notes.
+7. Click **Save Draft**.
+8. Confirm an `SR-####` record appears after reload.
+9. Open one of the selected Stock Items and confirm the same PO Supplier Return history is visible.
 
-## Included
-
-- Supplier Returns panel on Purchase Orders and Stock Items
-- Persistent `SupplierReturn`, `SupplierReturnLine`, and `SupplierReturnEvent` models
-- Automatic `SR-0001`, `SR-0002`, ... references
-- One Supplier Return per originating PO; multiple stock lines from that PO are supported
-- Draft creation with supplier RMA, Redmine issue, holding location, notes, quantity, reason, and requested resolution
-- Server-side validation that returned stock originates from the selected PO, quantities are positive / available, and quantity is not already committed to another open Supplier Return
-- Draft / Ready to Return / Cancelled status model
-- No stock movement yet: marking Ready is intentionally only a workflow state in v0.2.2
-
-## Upgrade / install
-
-Update the plugin from GitHub, then run the normal InvenTree plugin/update process so the new Django migration is applied and plugin static files are collected. Restart InvenTree afterwards.
-
-Because v0.2.2 introduces `AppMixin` database models, ensure InvenTree application plugins are enabled in the instance configuration. Test only on a non-production instance first.
-
-## Test
-
-1. Open a PO with stock already received against it.
-2. Open **Supplier Returns**.
-3. Click **Create Supplier Return**.
-4. Select one or more received stock items from that PO.
-5. Enter quantity, reason, requested resolution and holding location.
-6. Save Draft.
-7. Confirm an `SR-####` record appears after reload.
-8. Open one of those Stock Items and confirm the same PO Supplier Return history is visible.
-
-v0.2.2 does **not** move stock to the holding location. That is the next milestone after persistence and validation are confirmed.
+No stock movement is performed by v0.2.3. `READY` remains a workflow state only.
