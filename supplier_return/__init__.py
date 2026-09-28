@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.3.0."""
+"""InvenTree Supplier Return plugin - V0.4.0."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -7,6 +7,7 @@ from django.db import transaction
 from django.http import JsonResponse
 from django.urls import path
 from django.utils.translation import gettext_lazy as _
+from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_http_methods
 from plugin import InvenTreePlugin
 from plugin.mixins import AppMixin, SettingsMixin, UrlsMixin, UserInterfaceMixin
@@ -48,6 +49,11 @@ def _serialize(obj):
         'supplier_rma': obj.supplier_rma,
         'status': obj.status,
         'holding_location_id': obj.holding_location_id,
+        'external_location_id': obj.external_location_id,
+        'shipment_date': obj.shipment_date.isoformat() if obj.shipment_date else None,
+        'carrier': obj.carrier,
+        'tracking_number': obj.tracking_number,
+        'shipment_notes': obj.shipment_notes,
         'redmine_issue': obj.redmine_issue,
         'notes': obj.notes,
         'created_at': obj.created_at.isoformat(),
@@ -342,6 +348,78 @@ def return_detail_view(request, pk):
         obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions').get(pk=obj.pk)
         return JsonResponse(_serialize(obj))
 
+    # SHIPPED: move all segregated return stock to a user-selected external location.
+    if action == 'mark_shipped':
+        if obj.status != 'READY':
+            return JsonResponse({'error': 'Only a Ready to Return Supplier Return can be marked Shipped.'}, status=400)
+
+        external_id = data.get('external_location_id')
+        if not external_id:
+            return JsonResponse({'error': 'An external supplier location is required.'}, status=400)
+        try:
+            external = StockLocation.objects.get(pk=int(external_id))
+        except (StockLocation.DoesNotExist, TypeError, ValueError):
+            return JsonResponse({'error': 'The selected external supplier location is invalid.'}, status=400)
+
+        raw_date = data.get('shipment_date')
+        shipment_date = parse_date(raw_date) if raw_date else None
+        if raw_date and shipment_date is None:
+            return JsonResponse({'error': 'Shipment date is invalid.'}, status=400)
+
+        carrier = (data.get('carrier') or '').strip()
+        tracking = (data.get('tracking_number') or '').strip()
+        shipment_notes = (data.get('shipment_notes') or '').strip()
+        user = request.user if request.user.is_authenticated else None
+
+        try:
+            with transaction.atomic():
+                obj = SupplierReturn.objects.select_for_update().get(pk=obj.pk)
+                if obj.status != 'READY':
+                    raise ValueError('This Supplier Return is no longer Ready to Return.')
+                lines = list(obj.lines.select_for_update())
+                if not lines:
+                    raise ValueError('At least one return line is required.')
+
+                locked = []
+                for line in lines:
+                    if not line.return_stock_item_id:
+                        raise ValueError(f'Return stock has not been prepared for line #{line.pk}.')
+                    stock = StockItem.objects.select_for_update().get(pk=line.return_stock_item_id)
+                    if stock.quantity < line.quantity:
+                        raise ValueError(f'Return Stock #{stock.pk} no longer contains the expected {_qty(line.quantity)} units.')
+                    locked.append((line, stock))
+
+                for line, stock in locked:
+                    note = f'{obj.reference}: shipped to supplier / external location'
+                    ok = stock.move(external, note, user, quantity=line.quantity)
+                    if ok is False:
+                        raise ValueError(f'Could not move Return Stock #{stock.pk} to the external location.')
+
+                obj.external_location_id = external.pk
+                obj.shipment_date = shipment_date
+                obj.carrier = carrier
+                obj.tracking_number = tracking
+                obj.shipment_notes = shipment_notes
+                obj.status = 'SHIPPED'
+                obj.save(update_fields=[
+                    'external_location_id', 'shipment_date', 'carrier', 'tracking_number',
+                    'shipment_notes', 'status', 'updated_at'
+                ])
+                detail = f'Shipped return stock to external location #{external.pk}'
+                if carrier:
+                    detail += f' via {carrier}'
+                if tracking:
+                    detail += f' (tracking {tracking})'
+                SupplierReturnEvent.objects.create(
+                    supplier_return=obj, event_type='STATUS_SHIPPED', user=user, notes=detail
+                )
+        except (ValueError, DjangoValidationError, StockItem.DoesNotExist) as exc:
+            message = getattr(exc, 'message', None) or '; '.join(getattr(exc, 'messages', [])) or str(exc)
+            return JsonResponse({'error': message}, status=400)
+
+        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions').get(pk=obj.pk)
+        return JsonResponse(_serialize(obj))
+
     # After READY, requested resolution / admin fields may still evolve. Returned stock and qty stay locked.
     if action == 'update_admin':
         if obj.status not in {'READY', 'SHIPPED'}:
@@ -376,7 +454,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.3.0'
+    VERSION = '0.4.0'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -404,7 +482,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v030.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v040.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,
