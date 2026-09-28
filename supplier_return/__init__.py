@@ -697,7 +697,8 @@ def supplier_return_queue_page(request):
 <main><h1>Supplier Returns</h1><p class="sub">Operational queue for supplier returns, RMAs and outstanding resolutions.</p>
 <div class="controls"><label>Status <select id="status"><option value="">All</option>{status_options}</select></label><input id="search" placeholder="Search SR / supplier / RMA / PO"></div>
 <div style="overflow:auto"><table><thead><tr><th>SR</th><th>Supplier</th><th>Original PO</th><th>Supplier RMA</th><th>Status</th><th>Returned</th><th>Resolved</th><th>Outstanding</th><th>Received</th><th>Created</th><th>Shipped</th><th></th></tr></thead><tbody id="rows">{row_html}</tbody></table></div></main>
-<script>const status=document.getElementById('status'),search=document.getElementById('search');function filterRows(){const s=status.value,q=search.value.trim().toLowerCase();document.querySelectorAll('#rows tr[data-status]').forEach(r=>{r.style.display=(!s||r.dataset.status===s)&&(!q||r.dataset.search.includes(q))?'':'none';});}status.addEventListener('change',filterRows);search.addEventListener('input',filterRows);</script></body></html>""".format(status_options=status_options,row_html=row_html)
+<script>const status=document.getElementById('status'),search=document.getElementById('search');function filterRows(){const s=status.value,q=search.value.trim().toLowerCase();document.querySelectorAll('#rows tr[data-status]').forEach(r=>{r.style.display=(!s||r.dataset.status===s)&&(!q||r.dataset.search.includes(q))?'':'none';});}status.addEventListener('change',filterRows);search.addEventListener('input',filterRows);</script></body></html>"""
+    page = page.replace('{status_options}', status_options).replace('{row_html}', row_html)
     return HttpResponse(page)
 
 
@@ -706,7 +707,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.3'
+    VERSION = '0.5.4'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -732,7 +733,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
         return [{
             'key': 'supplier-return-queue',
             'title': _('Supplier Returns'),
-            'source': self.plugin_static_file('supplier_return_v053.js:getSupplierReturnQueue'),
+            'source': self.plugin_static_file('supplier_return_v054.js:getSupplierReturnQueue'),
             'options': {'path': 'returns'},
             'context': {'plugin_base': f'/plugin/{self.SLUG}', 'plugin_version': self.VERSION},
         }]
@@ -773,7 +774,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v053.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v054.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,

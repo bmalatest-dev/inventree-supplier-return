@@ -1,6 +1,10 @@
-# InvenTree Supplier Return v0.5.3
+# InvenTree Supplier Return v0.5.4
 
 Supplier-return / RMA workflow for InvenTree.
+
+## v0.5.4
+
+Fixes the server-hosted Supplier Returns queue rendering error caused by Python `str.format()` interpreting CSS and JavaScript braces as format fields. The queue now inserts only the two intended dynamic HTML fragments using targeted token replacement. No database migration is required.
 
 ## v0.5.3
 - Adds a central **Supplier Returns** operational queue via an InvenTree plugin UI route and navigation item.
