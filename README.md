@@ -1,6 +1,20 @@
-# InvenTree Supplier Return v0.5.5
+# InvenTree Supplier Return v0.5.7
 
 Supplier-return / RMA workflow for InvenTree.
+
+## v0.5.7
+
+Replacement / rework receipt improvements:
+
+- Adds an editable Batch ID field when physical replacement or reworked stock is received.
+- Defaults the Batch ID to the returned stock item's current batch, while allowing the receiver to assign the new Per Vices package ID.
+- Adds a Stock Status selector at receipt, defaulting to **Attention needed** so newly received material can remain visibly pending inspection.
+- Attempts to load configured InvenTree stock statuses (including custom statuses), with built-in status choices as a fallback.
+- Records the old-to-new Batch ID transition in the received stock item's Stock Tracking notes.
+- Records the selected stock status in the receipt tracking / Supplier Return event history.
+- Each partial receipt can use its own Batch ID and status.
+
+No database migration is required. Navigation remains on the known v0.5.5 implementation.
 
 ## v0.5.5
 

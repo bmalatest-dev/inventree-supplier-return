@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.5.0."""
+"""InvenTree Supplier Return plugin - V0.5.7."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -565,6 +565,11 @@ def receipt_view(request, pk, resolution_pk):
 
     user = request.user if request.user.is_authenticated else None
     notes = (data.get('notes') or '').strip()
+    batch = (data.get('batch') or '').strip()
+    try:
+        stock_status = int(data.get('status', 50))
+    except (TypeError, ValueError):
+        return JsonResponse({'error': 'A valid stock status is required.'}, status=400)
     try:
         with transaction.atomic():
             res = SupplierReturnResolution.objects.select_for_update().select_related('line').get(pk=res.pk)
@@ -584,21 +589,43 @@ def receipt_view(request, pk, resolution_pk):
                     if ok is False:
                         raise ValueError('Could not move reworked material to the receiving location.')
                     received_stock = return_stock
+                old_batch = getattr(received_stock, 'batch', None) or ''
+                received_stock.batch = batch
+                received_stock.status = stock_status
+                received_stock.save(update_fields=['batch', 'status', 'updated'])
+                try:
+                    received_stock.add_stock(
+                        Decimal('0'), user,
+                        notes=(
+                            f'{obj.reference}: repaired/reworked material received; '
+                            f'Batch ID changed from {old_batch or "<blank>"} to {batch or "<blank>"}; '
+                            f'stock status set to {stock_status}'
+                        )
+                    )
+                except Exception:
+                    pass
             else:
                 # Replacement is new physical material. Do not receive it against the original PO.
+                old_batch = getattr(return_stock, 'batch', None) or ''
                 kwargs = {
                     'part_id': return_stock.part_id,
                     'quantity': qty,
                     'location': location,
-                    'batch': getattr(return_stock, 'batch', None),
+                    'batch': batch,
+                    'status': stock_status,
                     'supplier_part_id': getattr(return_stock, 'supplier_part_id', None),
                     'purchase_price': getattr(return_stock, 'purchase_price', None),
                     'purchase_price_currency': getattr(return_stock, 'purchase_price_currency', None),
                 }
                 # Drop None values so model defaults are respected.
                 received_stock = StockItem.objects.create(**{k:v for k,v in kwargs.items() if v is not None})
+                tracking_note = (
+                    f'{obj.reference}: replacement stock received; '
+                    f'Batch ID changed from {old_batch or "<blank>"} to {batch or "<blank>"}; '
+                    f'stock status set to {stock_status}'
+                )
                 try:
-                    received_stock.add_stock(Decimal('0'), user, notes=f'{obj.reference}: replacement stock received')
+                    received_stock.add_stock(Decimal('0'), user, notes=tracking_note)
                 except Exception:
                     pass
                 ok = return_stock.take_stock(qty, user, notes=f'{obj.reference}: replaced by Stock #{received_stock.pk}')
@@ -613,7 +640,10 @@ def receipt_view(request, pk, resolution_pk):
             res.save(update_fields=['replacement_stock_item_id'])
             SupplierReturnEvent.objects.create(
                 supplier_return=obj, event_type='RESOLUTION_RECEIVED', user=user,
-                notes=f'Received {_qty(qty)} for {res.resolution} as Stock #{received_stock.pk}',
+                notes=(
+                    f'Received {_qty(qty)} for {res.resolution} as Stock #{received_stock.pk}; '
+                    f'Batch ID {batch or "<blank>"}; stock status {stock_status}'
+                ),
             )
     except (ValueError, DjangoValidationError, StockItem.DoesNotExist) as exc:
         return JsonResponse({'error': str(exc)}, status=400)
@@ -707,7 +737,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.5'
+    VERSION = '0.5.7'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
