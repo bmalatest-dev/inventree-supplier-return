@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.5.7."""
+"""InvenTree Supplier Return plugin - V0.5.11."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -593,17 +593,22 @@ def receipt_view(request, pk, resolution_pk):
                 received_stock.batch = batch
                 received_stock.status = stock_status
                 received_stock.save(update_fields=['batch', 'status', 'updated'])
-                try:
-                    received_stock.add_stock(
-                        Decimal('0'), user,
-                        notes=(
-                            f'{obj.reference}: repaired/reworked material received; '
-                            f'Batch ID changed from {old_batch or "<blank>"} to {batch or "<blank>"}; '
-                            f'stock status set to {stock_status}'
-                        )
-                    )
-                except Exception:
-                    pass
+                from stock.status_codes import StockHistoryCode
+                received_stock.add_tracking_entry(
+                    StockHistoryCode.STOCK_UPDATE,
+                    user,
+                    notes=(
+                        f'{obj.reference}: repaired/reworked material received; '
+                        f'Batch ID changed from {old_batch or "<blank>"} to {batch or "<blank>"}; '
+                        f'stock status set to {stock_status}'
+                    ),
+                    deltas={
+                        'batch': batch,
+                        'status': stock_status,
+                        'supplier_return': obj.reference,
+                        'source_stock_item': return_stock.pk,
+                    },
+                )
             else:
                 # Replacement is new physical material. Do not receive it against the original PO.
                 old_batch = getattr(return_stock, 'batch', None) or ''
@@ -624,10 +629,22 @@ def receipt_view(request, pk, resolution_pk):
                     f'Batch ID changed from {old_batch or "<blank>"} to {batch or "<blank>"}; '
                     f'stock status set to {stock_status}'
                 )
-                try:
-                    received_stock.add_stock(Decimal('0'), user, notes=tracking_note)
-                except Exception:
-                    pass
+                # Add an explicit native InvenTree stock tracking entry. Creating a
+                # StockItem only records its initial state; a zero-quantity add is ignored
+                # by current InvenTree versions. The STOCK_UPDATE entry below preserves
+                # the Supplier Return provenance, batch transition and selected status.
+                from stock.status_codes import StockHistoryCode
+                received_stock.add_tracking_entry(
+                    StockHistoryCode.STOCK_UPDATE,
+                    user,
+                    notes=tracking_note,
+                    deltas={
+                        'batch': batch,
+                        'status': stock_status,
+                        'supplier_return': obj.reference,
+                        'source_stock_item': return_stock.pk,
+                    },
+                )
                 ok = return_stock.take_stock(qty, user, notes=f'{obj.reference}: replaced by Stock #{received_stock.pk}')
                 if ok is False and qty < return_stock.quantity:
                     raise ValueError('Could not reduce returned stock after replacement receipt.')
@@ -737,7 +754,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.10'
+    VERSION = '0.5.11'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'

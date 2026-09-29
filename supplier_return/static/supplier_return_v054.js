@@ -22,7 +22,7 @@ export async function renderSupplierReturnPanel(target, data) {
 
     const render=()=>{
       const cards=(state.returns||[]).map(r=>{
-        const stockLink=(id,text)=>`<a href="/web/stock/item/${id}/" title="Open Stock Item #${id}">${esc(text)}</a>`;
+        const stockLink=(id,text)=>`<a href="/web/stock/item/${id}" title="Open Stock Item #${id}">${esc(text)}</a>`;
         const lines=r.lines.map(x=>`<div style="margin:3px 0">${stockLink(x.stock_item_id,`Stock #${x.stock_item_id}`)}${x.return_stock_item_id&&x.return_stock_item_id!==x.stock_item_id?` → ${stockLink(x.return_stock_item_id,`Return Stock #${x.return_stock_item_id}`)}`:''}: <b>${esc(x.quantity)}</b> — ${esc(label(reasons,x.reason))} / Requested: ${esc(label(resolutions,x.requested_resolution))}</div>`).join('');
         let buttons='';
         if(r.status==='DRAFT') buttons=`<button class="sr-edit" data-id="${r.id}">Edit Draft</button> <button class="sr-ready" data-id="${r.id}">Mark Ready to Return</button>`;

@@ -1,5 +1,10 @@
 # InvenTree Supplier Return v0.5.7
 
+## v0.5.11
+
+Fixes replacement receipt traceability and stock-item links. Replacement receipts now create an explicit native InvenTree Stock Tracking update recording the Supplier Return reference, source return-stock item, old-to-new Batch ID transition, selected stock status, and the user performing the receipt. Stock-item links now use InvenTree's canonical `/web/stock/item/<id>` route without the invalid trailing slash. No database migration is required.
+
+
 Supplier-return / RMA workflow for InvenTree.
 
 ## v0.5.7
