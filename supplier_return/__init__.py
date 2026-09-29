@@ -748,7 +748,7 @@ def supplier_return_queue_page(request):
         '<td>{returned}</td><td>{resolved}</td><td>{outstanding}</td><td>{received}</td>'
         '<td>{created}</td><td>{shipped}</td>'
         '<td><a href="/web/purchasing/purchase-order/{po}/supplier-return-panel">Open</a></td></tr>'.format(
-            status=e(r['status']), search=e((r['reference']+' '+(r['supplier_name'] or '')+' '+(r['supplier_rma'] or '')+' PO-'+str(r['purchase_order_id'])).lower()),
+            status=e(r['status']), search=e((r['reference']+' '+(r['supplier_name'] or '')+' '+(r['supplier_rma'] or '')+' PO-'+str(r['purchase_order_id'])+' '+' '.join(str(ar.get('resolution') or ar.get('resolution_type') or ar.get('actual_resolution') or '') for line in r.get('lines', []) for ar in line.get('actual_resolutions', []))).lower()),
             ref=e(r['reference']), supplier=e(r['supplier_name']) or '—', po=r['purchase_order_id'], rma=e(r['supplier_rma']) or '—',
             status_label=e(r['status_label']), returned=e(r['returned']), resolved=e(r['resolved']), outstanding=e(r['outstanding']), received=e(r['received']),
             created=e((r['created_at'] or '')[:10]), shipped=e(r['shipment_date']) or '—')
@@ -756,14 +756,34 @@ def supplier_return_queue_page(request):
     ) or '<tr><td colspan="12">No Supplier Returns found.</td></tr>'
 
     status_options = ''.join('<option value="{}">{}</option>'.format(e(k),e(v)) for k,v in sorted(statuses, key=lambda x:x[1]))
+    supplier_names = sorted({r['supplier_name'] for r in rows if r.get('supplier_name')})
+    supplier_options = ''.join('<option value="{}">{}</option>'.format(e(v.lower()), e(v)) for v in supplier_names)
+    resolution_values = sorted({str(ar.get('resolution') or ar.get('resolution_type') or ar.get('actual_resolution') or '').strip()
+                                for r in rows for line in r.get('lines', []) for ar in line.get('actual_resolutions', [])
+                                if str(ar.get('resolution') or ar.get('resolution_type') or ar.get('actual_resolution') or '').strip()})
+    resolution_options = ''.join('<option value="{}">{}</option>'.format(e(v.lower()), e(v.replace('_',' ').title())) for v in resolution_values)
     page = """<!doctype html><html><head><meta charset="utf-8"><title>Supplier Returns - InvenTree</title>
-<style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f8f9fa;color:#212529}header{background:#fff;border-bottom:1px solid #ddd;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}main{padding:24px}h1{margin:0 0 4px;font-size:26px}.sub{color:#666;margin:0 0 18px}.controls{display:flex;gap:10px;margin:14px 0;flex-wrap:wrap}input,select{padding:8px 10px;border:1px solid #bbb;border-radius:4px;background:white}table{width:100%;border-collapse:collapse;background:white;border:1px solid #ddd}th,td{padding:9px;border-bottom:1px solid #e5e5e5;text-align:left;white-space:nowrap}th{background:#f1f3f5}a{color:#1971c2;text-decoration:none}a:hover{text-decoration:underline}.back{font-weight:600}</style></head><body>
+<style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f8f9fa;color:#212529}header{background:#fff;border-bottom:1px solid #ddd;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}main{padding:24px}h1{margin:0 0 4px;font-size:26px}.sub{color:#666;margin:0 0 18px}.controls{display:flex;gap:10px;margin:14px 0;flex-wrap:wrap;align-items:end}.controls label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600}.controls input,.controls select{padding:8px 10px;border:1px solid #bbb;border-radius:4px;background:white;min-width:145px}.controls button{padding:8px 12px;border:1px solid #aaa;border-radius:4px;background:white;cursor:pointer}table{width:100%;border-collapse:collapse;background:white;border:1px solid #ddd}th,td{padding:9px;border-bottom:1px solid #e5e5e5;text-align:left;white-space:nowrap}th{background:#f1f3f5}a{color:#1971c2;text-decoration:none}a:hover{text-decoration:underline}.back{font-weight:600}</style></head><body>
 <header><div><b>InvenTree</b> / Supplier Returns</div><a class="back" href="/web/">Return to InvenTree</a></header>
 <main><h1>Supplier Returns</h1><p class="sub">Operational queue for supplier returns, RMAs and outstanding resolutions.</p>
-<div class="controls"><label>Status <select id="status"><option value="">All</option><option value="__OPEN__">Open only</option>{status_options}</select></label><input id="search" placeholder="Search SR / supplier / RMA / PO"></div>
+<div class="controls">
+<label>Status<select id="status"><option value="">All</option><option value="__OPEN__">Open only</option>{status_options}</select></label>
+<label>Supplier<select id="supplier"><option value="">All</option>{supplier_options}</select></label>
+<label>Original PO<input id="po" placeholder="PO # / reference"></label>
+<label>Supplier RMA<input id="rma" placeholder="RMA #"></label>
+<label>Resolution<select id="resolution"><option value="">All</option>{resolution_options}</select></label>
+<label>Created From<input id="createdFrom" type="date"></label><label>Created To<input id="createdTo" type="date"></label>
+<label>Shipped From<input id="shippedFrom" type="date"></label><label>Shipped To<input id="shippedTo" type="date"></label>
+<label>Search<input id="search" placeholder="SR / supplier / RMA / PO"></label><button id="clear" type="button">Clear Filters</button></div>
 <div style="overflow:auto"><table><thead><tr><th>SR</th><th>Supplier</th><th>Original PO</th><th>Supplier RMA</th><th>Status</th><th>Returned</th><th>Resolved</th><th>Outstanding</th><th>Received</th><th>Created</th><th>Shipped</th><th></th></tr></thead><tbody id="rows">{row_html}</tbody></table></div></main>
-<script>const status=document.getElementById('status'),search=document.getElementById('search');function filterRows(){const s=status.value,q=search.value.trim().toLowerCase();document.querySelectorAll('#rows tr[data-status]').forEach(r=>{const statusMatch=!s||(s==='__OPEN__'?!['CLOSED','CANCELLED'].includes(r.dataset.status):r.dataset.status===s);r.style.display=statusMatch&&(!q||r.dataset.search.includes(q))?'':'none';});}status.addEventListener('change',filterRows);search.addEventListener('input',filterRows);</script></body></html>"""
-    page = page.replace('{status_options}', status_options).replace('{row_html}', row_html)
+<script>
+const ids=['status','supplier','po','rma','resolution','createdFrom','createdTo','shippedFrom','shippedTo','search'];
+const el=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+function filterRows(){const s=el.status.value,q=el.search.value.trim().toLowerCase(),sup=el.supplier.value,po=el.po.value.trim().toLowerCase(),rma=el.rma.value.trim().toLowerCase(),res=el.resolution.value,cf=el.createdFrom.value,ct=el.createdTo.value,sf=el.shippedFrom.value,st=el.shippedTo.value;document.querySelectorAll('#rows tr[data-status]').forEach(r=>{const cells=r.cells,search=(r.dataset.search||''),supplier=(cells[1]?.textContent||'').trim().toLowerCase(),pov=(cells[2]?.textContent||'').trim().toLowerCase(),rmav=(cells[3]?.textContent||'').trim().toLowerCase(),created=(cells[9]?.textContent||'').trim(),shipped=(cells[10]?.textContent||'').trim(),statusMatch=!s||(s==='__OPEN__'?!['CLOSED','CANCELLED'].includes(r.dataset.status):r.dataset.status===s),supplierMatch=!sup||supplier===sup,poMatch=!po||pov.includes(po),rmaMatch=!rma||rmav.includes(rma),createdMatch=(!cf||created>=cf)&&(!ct||created<=ct),shippedMatch=(!sf||(shipped!=='—'&&shipped>=sf))&&(!st||(shipped!=='—'&&shipped<=st)),searchMatch=!q||search.includes(q),resolutionMatch=!res||search.includes(res);r.style.display=statusMatch&&supplierMatch&&poMatch&&rmaMatch&&createdMatch&&shippedMatch&&searchMatch&&resolutionMatch?'':'none';});}
+ids.forEach(id=>el[id].addEventListener(id==='search'||id==='po'||id==='rma'?'input':'change',filterRows));
+document.getElementById('clear').addEventListener('click',()=>{ids.forEach(id=>el[id].value='');filterRows();});
+</script></body></html>"""
+    page = page.replace('{status_options}', status_options).replace('{supplier_options}', supplier_options).replace('{resolution_options}', resolution_options).replace('{row_html}', row_html)
     return HttpResponse(page)
 
 
@@ -772,7 +792,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.18'
+    VERSION = '0.5.19'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
