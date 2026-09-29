@@ -772,7 +772,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.13'
+    VERSION = '0.5.14'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -795,14 +795,27 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     }
 
     def get_ui_navigation_items(self, request, context, **kwargs):
-        # This is an absolute server URL, not a React plugin route. The leading
-        # slash is intentional: without it InvenTree treats the value as an
-        # internal /web/... route and rewrites it to /web/plugin/... .
+        # InvenTree navigation items target frontend routes.
         return [{
             'key': 'supplier-return-nav',
             'title': _('Supplier Returns'),
             'icon': 'ti:truck-return:outline',
-            'options': {'url': f'/plugin/{self.SLUG}/queue/'},
+            'options': {'url': f'plugin/{self.SLUG}/returns'},
+        }]
+
+    def get_ui_routes(self, request, context, **kwargs):
+        # Exposed by InvenTree at /web/plugin/supplier-return/returns
+        return [{
+            'key': 'supplier-return-queue',
+            'title': _('Supplier Returns'),
+            'source': self.plugin_static_file(
+                'supplier_return_v054.js:getSupplierReturnQueue'
+            ),
+            'options': {'path': 'returns'},
+            'context': {
+                'plugin_version': self.VERSION,
+                'plugin_base': f'/plugin/{self.SLUG}',
+            },
         }]
 
     def get_ui_panels(self, request, context, **kwargs):
