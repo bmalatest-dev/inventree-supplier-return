@@ -145,7 +145,10 @@ def _validate_lines(po_id, lines, exclude_return_id=None):
         resolution = raw.get('requested_resolution')
         if reason not in SupplierReturnLine.Reason.values or resolution not in SupplierReturnLine.Resolution.values:
             raise ValueError('A valid reason and requested resolution are required.')
-        validated.append((stock, qty, reason, resolution, raw.get('notes', '')))
+        line_notes = (raw.get('notes') or '').strip()
+        if (reason == 'OTHER' or resolution == 'OTHER') and not line_notes:
+            raise ValueError('Line Notes are required when Reason or Requested Resolution is Other.')
+        validated.append((stock, qty, reason, resolution, line_notes))
     return validated
 
 
@@ -297,6 +300,40 @@ def return_detail_view(request, pk):
                 notes='Supplier Return draft updated',
             )
         obj.refresh_from_db()
+        return JsonResponse(_serialize(obj))
+
+    # CANCEL: permitted only before shipment.
+    if action == 'cancel_return':
+        if obj.status not in {'DRAFT', 'READY'}:
+            return JsonResponse({'error': 'A Supplier Return can only be cancelled before it has shipped.'}, status=400)
+        user = request.user if request.user.is_authenticated else None
+        try:
+            with transaction.atomic():
+                obj = SupplierReturn.objects.select_for_update().get(pk=obj.pk)
+                if obj.status not in {'DRAFT', 'READY'}:
+                    raise ValueError('This Supplier Return can no longer be cancelled because it has shipped or progressed further.')
+                was_ready = obj.status == 'READY'
+                if was_ready:
+                    for line in obj.lines.select_for_update():
+                        if not line.return_stock_item_id or not line.original_location_id:
+                            raise ValueError(f'Return stock or original location is missing for line #{line.pk}.')
+                        stock = StockItem.objects.select_for_update().get(pk=line.return_stock_item_id)
+                        if stock.quantity < line.quantity:
+                            raise ValueError(f'Return Stock #{stock.pk} no longer contains the expected {_qty(line.quantity)} units.')
+                        original_location = StockLocation.objects.get(pk=line.original_location_id)
+                        ok = stock.move(original_location, f'{obj.reference}: supplier return cancelled before shipment', user, quantity=line.quantity)
+                        if ok is False:
+                            raise ValueError(f'Could not restore Return Stock #{stock.pk} to its original location.')
+                obj.status = 'CANCELLED'
+                obj.save(update_fields=['status', 'updated_at'])
+                SupplierReturnEvent.objects.create(
+                    supplier_return=obj, event_type='CANCELLED', user=user,
+                    notes='Supplier Return cancelled before shipment; prepared stock restored to original location' if was_ready else 'Supplier Return draft cancelled before shipment',
+                )
+        except (ValueError, DjangoValidationError, StockItem.DoesNotExist, StockLocation.DoesNotExist) as exc:
+            message = getattr(exc, 'message', None) or '; '.join(getattr(exc, 'messages', [])) or str(exc)
+            return JsonResponse({'error': message}, status=400)
+        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=obj.pk)
         return JsonResponse(_serialize(obj))
 
     # READY: physically segregate the selected quantities into the holding location.
@@ -831,7 +868,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.21'
+    VERSION = '0.5.22'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -866,7 +903,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v521.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v522.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,
