@@ -1,18 +1,6 @@
-# InvenTree Supplier Return v0.5.9
+# InvenTree Supplier Return v0.5.7
 
 Supplier-return / RMA workflow for InvenTree.
-
-## v0.5.9
-
-Corrected replacement / rework receiving UI, built from the known-working v0.5.7 package.
-
-- Keeps the proven panel registration on `supplier_return_v054.js`.
-- Places the Batch ID and Stock Status receiving controls into that exact registered asset.
-- Retains the v0.5.7 backend support for Batch ID and stock status.
-- Records the old-to-new Batch ID transition in Stock Tracking.
-- Supports a separate Batch ID and stock status for each partial receipt.
-- Preserves the v0.5.5 navigation implementation.
-- No database migration is required.
 
 ## v0.5.7
 

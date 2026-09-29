@@ -101,7 +101,7 @@ export async function renderSupplierReturnPanel(target, data) {
       e.querySelectorAll('.sr-receive').forEach(b=>b.onclick=()=>showReceive(r,Number(b.dataset.resolution)));
     };
 
-    const showReceive=(r,resId)=>{
+    const showReceive=async(r,resId)=>{
       const res=r.lines.flatMap(x=>x.actual_resolutions||[]).find(x=>Number(x.id)===Number(resId)); if(!res)return;
       const box=target.querySelector('#sr-receive-box')||target.querySelector('#sr-editor');
       const remaining=Number(res.quantity)-Number(res.received_quantity||0);
@@ -109,13 +109,8 @@ export async function renderSupplierReturnPanel(target, data) {
       const returnStockId=line?.return_stock_item_id||line?.stock_item_id;
       let oldBatch='';
       try { const stock=await api(`/api/stock/${returnStockId}/`); oldBatch=stock.batch||''; } catch(e) {}
-      let statusOptions=[['10','OK'],['50','Attention needed'],['55','Damaged'],['60','Destroyed'],['65','Rejected'],['70','Lost'],['75','Quarantined'],['85','Returned']];
-      try {
-        const sd=await api('/api/stock/status/');
-        const raw=sd.results||sd;
-        if(Array.isArray(raw)&&raw.length) statusOptions=raw.map(x=>[String(x.key??x.value??x.pk),x.label??x.name??x.text??String(x.key??x.value??x.pk)]);
-      } catch(e) {}
-      box.innerHTML=`<hr><h4>Receive ${esc(label(resolutions,res.resolution))}</h4><p><b>Expected:</b> ${esc(res.quantity)} &nbsp; <b>Received:</b> ${esc(res.received_quantity||0)} &nbsp; <b>Remaining:</b> ${remaining}</p><label>Receive Quantity <input id="sr-rec-qty" type="number" min="0" step="any" value="${remaining}" style="width:90px"></label> <label>Batch ID <input id="sr-rec-batch" value="${esc(oldBatch)}" style="width:180px"></label> <label>Stock Status <select id="sr-rec-status">${statusOptions.map(x=>`<option value="${esc(x[0])}" ${String(x[0])==='50'?'selected':''}>${esc(x[1])}</option>`).join('')}</select></label><br><br><label>Receiving / Inspection Location <select id="sr-rec-loc"><option value="">Select…</option>${locations.map(l=>`<option value="${l.pk||l.id}">${esc(l.pathstring||l.name)}</option>`).join('')}</select></label><br><br><label>Receipt Notes <input id="sr-rec-notes" style="width:50%"></label><br><small>The received stock tracking history will record the Batch ID transition from ${esc(oldBatch||'<blank>')} to the entered Batch ID.</small><br><button id="sr-rec-save">Receive</button> <span id="sr-rec-msg"></span>`;
+      const statusOptions=[['10','OK'],['50','Attention needed'],['55','Damaged'],['60','Destroyed'],['65','Rejected'],['70','Lost'],['75','Quarantined'],['85','Returned']];
+      box.innerHTML=`<hr><h4>Receive ${esc(label(resolutions,res.resolution))}</h4><p><b>Expected:</b> ${esc(res.quantity)} &nbsp; <b>Received:</b> ${esc(res.received_quantity||0)} &nbsp; <b>Remaining:</b> ${remaining}</p><label>Receive Quantity <input id="sr-rec-qty" type="number" min="0" step="any" value="${remaining}" style="width:90px"></label> <label>Batch ID <input id="sr-rec-batch" value="${esc(oldBatch)}" style="width:180px"></label> <label>Stock Status <select id="sr-rec-status">${statusOptions.map(x=>`<option value="${esc(x[0])}" ${String(x[0])==='50'?'selected':''}>${esc(x[1])}</option>`).join('')}</select></label><br><br><label>Receiving / Inspection Location <select id="sr-rec-loc"><option value="">Select…</option>${locations.map(l=>`<option value="${l.pk||l.id}">${esc(l.pathstring||l.name)}</option>`).join('')}</select></label><br><br><label>Receipt Notes <input id="sr-rec-notes" style="width:50%"></label><br><small>Stock Tracking will record the Batch ID change from ${esc(oldBatch||'<blank>')} to the entered Batch ID.</small><br><button id="sr-rec-save">Receive</button> <span id="sr-rec-msg"></span>`;
       box.querySelector('#sr-rec-save').onclick=async()=>{const m=box.querySelector('#sr-rec-msg');const loc=box.querySelector('#sr-rec-loc').value;if(!loc){m.textContent='Select a receiving / inspection location.';return;}m.textContent='Receiving…';try{await api(`${base}/returns/${r.id}/resolutions/${res.id}/receive/`,{method:'POST',body:JSON.stringify({quantity:box.querySelector('#sr-rec-qty').value,location_id:Number(loc),batch:box.querySelector('#sr-rec-batch').value,status:Number(box.querySelector('#sr-rec-status').value),notes:box.querySelector('#sr-rec-notes').value})});location.reload();}catch(ex){m.textContent=ex.message;}};
     };
 
