@@ -737,7 +737,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.8'
+    VERSION = '0.5.9'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -800,7 +800,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v058.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v054.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,
