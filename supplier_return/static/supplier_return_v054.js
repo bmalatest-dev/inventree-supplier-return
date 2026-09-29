@@ -122,7 +122,7 @@ export async function renderSupplierReturnPanel(target, data) {
     };
 
     const wire=()=>{
-      target.querySelector('#sr-all').onclick=()=>{window.location.href='/web/plugin/supplier-return/returns';};
+      target.querySelector('#sr-all').onclick=()=>{window.location.href='/plugin/supplier-return/queue/';};
       target.querySelector('#sr-create').onclick=()=>showDraft(null);
       target.querySelectorAll('.sr-edit').forEach(b=>b.onclick=()=>showDraft(state.returns.find(r=>Number(r.id)===Number(b.dataset.id))));
       target.querySelectorAll('.sr-ready').forEach(b=>b.onclick=()=>markReady(state.returns.find(r=>Number(r.id)===Number(b.dataset.id))));
