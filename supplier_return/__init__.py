@@ -772,7 +772,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.15'
+    VERSION = '0.5.16'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -794,14 +794,6 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
         'DEFAULT_RECEIVING_LOCATION': {'name': _('Default return receiving location'), 'description': _('Reserved for the receiving workflow.'), 'model': 'stock.stocklocation', 'required': False},
     }
 
-    def get_ui_navigation_items(self, request, context, **kwargs):
-        # InvenTree navigation items target frontend routes.
-        return [{
-            'key': 'supplier-return-nav',
-            'title': _('Supplier Returns'),
-            'icon': 'ti:truck-return:outline',
-            'options': {'url': f'/plugin/{self.SLUG}/queue/'},
-        }]
 
     def get_ui_panels(self, request, context, **kwargs):
         context = context or {}
