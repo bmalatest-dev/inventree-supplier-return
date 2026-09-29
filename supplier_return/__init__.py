@@ -772,7 +772,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.12'
+    VERSION = '0.5.13'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -794,45 +794,15 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
         'DEFAULT_RECEIVING_LOCATION': {'name': _('Default return receiving location'), 'description': _('Reserved for the receiving workflow.'), 'model': 'stock.stocklocation', 'required': False},
     }
 
-    def get_ui_routes(self, request, context, **kwargs):
-        # Native InvenTree UI route for the top-level Supplier Returns navigation.
-        # The server-hosted /plugin/supplier-return/queue/ page remains available
-        # as a fallback / direct operational queue.
-        return [{
-            'key': 'supplier-return-queue',
-            'title': _('Supplier Returns'),
-            'source': self.plugin_static_file('supplier_return_v054.js:getSupplierReturnQueue'),
-            'options': {'path': 'returns'},
-            'context': {
-                'plugin_base': f'/plugin/{self.SLUG}',
-                'plugin_version': self.VERSION,
-            },
-        }]
-
-    def get_ui_features(self, feature_type, context, request, **kwargs):
-        """Return UI features, with explicit route dispatch for InvenTree 1.6.
-
-        Some 1.6 development builds expose the ``route`` feature endpoint but the
-        base UserInterfaceMixin dispatcher does not forward that feature type to
-        ``get_ui_routes``.  Handle it explicitly while delegating every other
-        feature type to InvenTree's normal dispatcher.
-        """
-        value = getattr(feature_type, 'value', feature_type)
-        name = getattr(feature_type, 'name', '')
-
-        if str(value).lower() == 'route' or str(name).lower() == 'route':
-            return self.get_ui_routes(request, context, **kwargs)
-
-        return super().get_ui_features(
-            feature_type=feature_type, context=context, request=request, **kwargs
-        )
-
     def get_ui_navigation_items(self, request, context, **kwargs):
+        # This is an absolute server URL, not a React plugin route. The leading
+        # slash is intentional: without it InvenTree treats the value as an
+        # internal /web/... route and rewrites it to /web/plugin/... .
         return [{
             'key': 'supplier-return-nav',
             'title': _('Supplier Returns'),
             'icon': 'ti:truck-return:outline',
-            'options': {'url': f'plugin/{self.SLUG}/returns'},
+            'options': {'url': f'/plugin/{self.SLUG}/queue/'},
         }]
 
     def get_ui_panels(self, request, context, **kwargs):

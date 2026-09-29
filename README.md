@@ -1,4 +1,4 @@
-# v0.5.12
+# v0.5.13
 
 Final workflow polish based on validated v0.5.11 behavior:
 
@@ -62,3 +62,8 @@ Fixes the server-hosted Supplier Returns queue rendering error caused by Python 
 
 ## V0.5.3
 Adds a dependable server-hosted central Supplier Returns queue at `/plugin/supplier-return/queue/`. Navigation and the All Supplier Returns button now use this queue, avoiding the dynamic React-route mounting issue observed in the tested InvenTree 1.6-dev frontend. No database migration is required.
+
+### v0.5.13
+
+Fixes the top-level **Supplier Returns** header navigation. The navigation item now uses the absolute server-hosted URL `/plugin/supplier-return/queue/` (including the required leading slash), rather than the React route `plugin/supplier-return/returns`. The unused React queue route advertisement has also been removed so there is a single central queue entry point. No database migration is required.
+
