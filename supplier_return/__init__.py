@@ -490,6 +490,9 @@ def resolution_view(request, pk):
         return JsonResponse({'error': 'A valid actual resolution is required.'}, status=400)
     if qty <= 0:
         return JsonResponse({'error': 'Resolution quantity must be greater than zero.'}, status=400)
+    notes = (data.get('notes') or '').strip()
+    if resolution == 'OTHER' and not notes:
+        return JsonResponse({'error': 'Notes are required when Actual Resolution is Other.'}, status=400)
     already = sum((r.quantity for r in line.actual_resolutions.all()), Decimal('0'))
     if already + qty > line.quantity:
         return JsonResponse({'error': f'Only {_qty(line.quantity - already)} remains unresolved on this line.'}, status=400)
@@ -518,7 +521,7 @@ def resolution_view(request, pk):
             r = SupplierReturnResolution.objects.create(
                 line=line, resolution=resolution, quantity=qty,
                 resolution_date=resolution_date, reference=(data.get('reference') or '').strip(),
-                amount=amount, notes=(data.get('notes') or '').strip(), created_by=user,
+                amount=amount, notes=notes, created_by=user,
             )
             # A credit/refund is a completed disposition: the supplier retains the physical material.
             if resolution in {'CREDIT', 'REFUND'}:
@@ -538,6 +541,42 @@ def resolution_view(request, pk):
         return JsonResponse({'error': str(exc)}, status=400)
     obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=obj.pk)
     return JsonResponse(_serialize(obj), status=201)
+
+
+@require_http_methods(['DELETE'])
+def resolution_delete_view(request, pk, resolution_pk):
+    """Reverse an actual resolution only when no irreversible downstream action has occurred."""
+    from .models import SupplierReturn, SupplierReturnEvent, SupplierReturnResolution
+
+    try:
+        obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=pk)
+        res = SupplierReturnResolution.objects.select_related('line').prefetch_related('receipts').get(
+            pk=resolution_pk, line__supplier_return=obj
+        )
+    except (SupplierReturn.DoesNotExist, SupplierReturnResolution.DoesNotExist):
+        return JsonResponse({'error': 'Supplier Return resolution not found.'}, status=404)
+
+    if obj.status == 'CLOSED':
+        return JsonResponse({'error': 'Closed Supplier Returns cannot be changed.'}, status=400)
+    if res.receipts.exists() or res.replacement_stock_item_id:
+        return JsonResponse({'error': 'This resolution cannot be reversed because material has already been received against it.'}, status=400)
+    if res.resolution in {'CREDIT', 'REFUND'}:
+        return JsonResponse({'error': 'Credit / refund resolutions cannot be reversed because inventory was already removed. Create a correcting transaction instead.'}, status=400)
+
+    qty, kind, line_pk = res.quantity, res.resolution, res.line_id
+    with transaction.atomic():
+        res.delete()
+        SupplierReturnEvent.objects.create(
+            supplier_return=obj, event_type='RESOLUTION_REVERSED',
+            user=request.user if request.user.is_authenticated else None,
+            notes=f'{_qty(qty)} {kind} resolution reversed on line #{line_pk}',
+        )
+        remaining = any(line.actual_resolutions.exists() for line in obj.lines.all())
+        obj.status = 'RESOLUTION' if remaining else 'SHIPPED'
+        obj.save(update_fields=['status', 'updated_at'])
+
+    obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=obj.pk)
+    return JsonResponse(_serialize(obj))
 
 
 @require_http_methods(['POST'])
@@ -792,7 +831,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.19'
+    VERSION = '0.5.20'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -804,6 +843,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             path('returns/', returns_view, name='returns'),
             path('returns/<int:pk>/', return_detail_view, name='return-detail'),
             path('returns/<int:pk>/resolutions/', resolution_view, name='resolution-create'),
+            path('returns/<int:pk>/resolutions/<int:resolution_pk>/', resolution_delete_view, name='resolution-delete'),
             path('returns/<int:pk>/resolutions/<int:resolution_pk>/receive/', receipt_view, name='resolution-receive'),
             path('returns/<int:pk>/close/', close_return_view, name='return-close'),
         ]
