@@ -122,7 +122,7 @@ export async function renderSupplierReturnPanel(target, data) {
     };
 
     const wire=()=>{
-      target.querySelector('#sr-all').onclick=()=>{window.location.href='/plugin/supplier-return/queue/';};
+      target.querySelector('#sr-all').onclick=()=>{window.location.href='/web/plugin/supplier-return/returns';};
       target.querySelector('#sr-create').onclick=()=>showDraft(null);
       target.querySelectorAll('.sr-edit').forEach(b=>b.onclick=()=>showDraft(state.returns.find(r=>Number(r.id)===Number(b.dataset.id))));
       target.querySelectorAll('.sr-ready').forEach(b=>b.onclick=()=>markReady(state.returns.find(r=>Number(r.id)===Number(b.dataset.id))));
@@ -158,7 +158,7 @@ export function getSupplierReturnQueue(data) {
 
     const statusName=s=>s==='SHIPPED'?'Awaiting Resolution':s==='RESOLUTION'?'Resolution in Progress':String(s||'').replaceAll('_',' ');
     const summary=r=>{const returned=r.lines.reduce((a,x)=>a+Number(x.quantity||0),0);const resolved=r.lines.reduce((a,x)=>a+(x.actual_resolutions||[]).reduce((b,y)=>b+Number(y.quantity||0),0),0);const received=r.lines.reduce((a,x)=>a+(x.actual_resolutions||[]).reduce((b,y)=>b+Number(y.received_quantity||0),0),0);return {returned,resolved,received};};
-    const shown=rows.filter(r=>(!status||r.status===status)&&(!search||`${r.reference} ${r.supplier_name||''} ${r.supplier_rma||''} PO-${r.purchase_order_id}`.toLowerCase().includes(search.toLowerCase())));
+    const shown=rows.filter(r=>(!status||(status==='__OPEN__'?!['CLOSED','CANCELLED'].includes(r.status):r.status===status))&&(!search||`${r.reference} ${r.supplier_name||''} ${r.supplier_rma||''} PO-${r.purchase_order_id}`.toLowerCase().includes(search.toLowerCase())));
     const h=React.createElement;
     const cell=(v,props={})=>h('td',Object.assign({style:{padding:'8px',borderBottom:'1px solid #ddd',textAlign:'left'}},props),v);
     const head=t=>h('th',{style:{padding:'8px',borderBottom:'1px solid #ddd',textAlign:'left'}},t);
@@ -169,7 +169,7 @@ export function getSupplierReturnQueue(data) {
       h('p',null,'Operational queue for supplier returns, RMAs and outstanding resolutions.'),
       h('div',{style:{display:'flex',gap:'8px',marginBottom:'12px'}},
         h('label',null,'Status ',h('select',{value:status,onChange:e=>setStatus(e.target.value)},
-          h('option',{value:''},'All'),h('option',{value:'DRAFT'},'Draft'),h('option',{value:'READY'},'Ready to Return'),h('option',{value:'SHIPPED'},'Awaiting Resolution'),h('option',{value:'RESOLUTION'},'Resolution in Progress'),h('option',{value:'CLOSED'},'Closed'),h('option',{value:'CANCELLED'},'Cancelled'))),
+          h('option',{value:''},'All'),h('option',{value:'__OPEN__'},'Open only'),h('option',{value:'DRAFT'},'Draft'),h('option',{value:'READY'},'Ready to Return'),h('option',{value:'SHIPPED'},'Awaiting Resolution'),h('option',{value:'RESOLUTION'},'Resolution in Progress'),h('option',{value:'CLOSED'},'Closed'),h('option',{value:'CANCELLED'},'Cancelled'))),
         h('input',{value:search,onChange:e=>setSearch(e.target.value),placeholder:'Search SR / RMA / PO'})
       ),
       h('div',{style:{overflow:'auto'}},h('table',{style:{width:'100%',borderCollapse:'collapse'}},

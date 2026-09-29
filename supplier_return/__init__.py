@@ -600,7 +600,7 @@ def receipt_view(request, pk, resolution_pk):
                     notes=(
                         f'{obj.reference}: repaired/reworked material received; '
                         f'Batch ID changed from {old_batch or "<blank>"} to {batch or "<blank>"}; '
-                        f'stock status set to {stock_status}'
+                        f'stock status set to {_stock_status_label(stock_status)}'
                     ),
                     deltas={
                         'batch': batch,
@@ -627,7 +627,7 @@ def receipt_view(request, pk, resolution_pk):
                 tracking_note = (
                     f'{obj.reference}: replacement stock received; '
                     f'Batch ID changed from {old_batch or "<blank>"} to {batch or "<blank>"}; '
-                    f'stock status set to {stock_status}'
+                    f'stock status set to {_stock_status_label(stock_status)}'
                 )
                 # Add an explicit native InvenTree stock tracking entry. Creating a
                 # StockItem only records its initial state; a zero-quantity add is ignored
@@ -659,7 +659,7 @@ def receipt_view(request, pk, resolution_pk):
                 supplier_return=obj, event_type='RESOLUTION_RECEIVED', user=user,
                 notes=(
                     f'Received {_qty(qty)} for {res.resolution} as Stock #{received_stock.pk}; '
-                    f'Batch ID {batch or "<blank>"}; stock status {stock_status}'
+                    f'Batch ID {batch or "<blank>"}; stock status {_stock_status_label(stock_status)}'
                 ),
             )
     except (ValueError, DjangoValidationError, StockItem.DoesNotExist) as exc:
@@ -667,6 +667,24 @@ def receipt_view(request, pk, resolution_pk):
 
     obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=obj.pk)
     return JsonResponse(_serialize(obj), status=201)
+
+
+def _stock_status_label(value):
+    """Return the human-readable label for a built-in InvenTree stock status."""
+    labels = {
+        10: 'OK',
+        50: 'Attention needed',
+        55: 'Damaged',
+        60: 'Destroyed',
+        65: 'Rejected',
+        70: 'Lost',
+        75: 'Quarantined',
+        85: 'Returned',
+    }
+    try:
+        return labels.get(int(value), str(value))
+    except (TypeError, ValueError):
+        return str(value)
 
 
 @require_http_methods(['POST'])
@@ -742,9 +760,9 @@ def supplier_return_queue_page(request):
 <style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f8f9fa;color:#212529}header{background:#fff;border-bottom:1px solid #ddd;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}main{padding:24px}h1{margin:0 0 4px;font-size:26px}.sub{color:#666;margin:0 0 18px}.controls{display:flex;gap:10px;margin:14px 0;flex-wrap:wrap}input,select{padding:8px 10px;border:1px solid #bbb;border-radius:4px;background:white}table{width:100%;border-collapse:collapse;background:white;border:1px solid #ddd}th,td{padding:9px;border-bottom:1px solid #e5e5e5;text-align:left;white-space:nowrap}th{background:#f1f3f5}a{color:#1971c2;text-decoration:none}a:hover{text-decoration:underline}.back{font-weight:600}</style></head><body>
 <header><div><b>InvenTree</b> / Supplier Returns</div><a class="back" href="/web/">Return to InvenTree</a></header>
 <main><h1>Supplier Returns</h1><p class="sub">Operational queue for supplier returns, RMAs and outstanding resolutions.</p>
-<div class="controls"><label>Status <select id="status"><option value="">All</option>{status_options}</select></label><input id="search" placeholder="Search SR / supplier / RMA / PO"></div>
+<div class="controls"><label>Status <select id="status"><option value="">All</option><option value="__OPEN__">Open only</option>{status_options}</select></label><input id="search" placeholder="Search SR / supplier / RMA / PO"></div>
 <div style="overflow:auto"><table><thead><tr><th>SR</th><th>Supplier</th><th>Original PO</th><th>Supplier RMA</th><th>Status</th><th>Returned</th><th>Resolved</th><th>Outstanding</th><th>Received</th><th>Created</th><th>Shipped</th><th></th></tr></thead><tbody id="rows">{row_html}</tbody></table></div></main>
-<script>const status=document.getElementById('status'),search=document.getElementById('search');function filterRows(){const s=status.value,q=search.value.trim().toLowerCase();document.querySelectorAll('#rows tr[data-status]').forEach(r=>{r.style.display=(!s||r.dataset.status===s)&&(!q||r.dataset.search.includes(q))?'':'none';});}status.addEventListener('change',filterRows);search.addEventListener('input',filterRows);</script></body></html>"""
+<script>const status=document.getElementById('status'),search=document.getElementById('search');function filterRows(){const s=status.value,q=search.value.trim().toLowerCase();document.querySelectorAll('#rows tr[data-status]').forEach(r=>{const statusMatch=!s||(s==='__OPEN__'?!['CLOSED','CANCELLED'].includes(r.dataset.status):r.dataset.status===s);r.style.display=statusMatch&&(!q||r.dataset.search.includes(q))?'':'none';});}status.addEventListener('change',filterRows);search.addEventListener('input',filterRows);</script></body></html>"""
     page = page.replace('{status_options}', status_options).replace('{row_html}', row_html)
     return HttpResponse(page)
 
@@ -754,7 +772,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.11'
+    VERSION = '0.5.12'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -777,9 +795,19 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     }
 
     def get_ui_routes(self, request, context, **kwargs):
-        # The central queue is server-hosted at /plugin/supplier-return/queue/.
-        # Do not expose the unused React route which resolves to Page Not Found.
-        return []
+        # Native InvenTree UI route for the top-level Supplier Returns navigation.
+        # The server-hosted /plugin/supplier-return/queue/ page remains available
+        # as a fallback / direct operational queue.
+        return [{
+            'key': 'supplier-return-queue',
+            'title': _('Supplier Returns'),
+            'source': self.plugin_static_file('supplier_return_v054.js:getSupplierReturnQueue'),
+            'options': {'path': 'returns'},
+            'context': {
+                'plugin_base': f'/plugin/{self.SLUG}',
+                'plugin_version': self.VERSION,
+            },
+        }]
 
     def get_ui_features(self, feature_type, context, request, **kwargs):
         """Return UI features, with explicit route dispatch for InvenTree 1.6.
@@ -804,7 +832,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-nav',
             'title': _('Supplier Returns'),
             'icon': 'ti:truck-return:outline',
-            'options': {'url': f'/plugin/{self.SLUG}/queue/'},
+            'options': {'url': f'plugin/{self.SLUG}/returns'},
         }]
 
     def get_ui_panels(self, request, context, **kwargs):

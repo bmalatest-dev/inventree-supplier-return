@@ -1,3 +1,13 @@
+# v0.5.12
+
+Final workflow polish based on validated v0.5.11 behavior:
+
+- Stock Tracking now records the human-readable selected stock status (for example, `Attention needed`) instead of only the numeric status code (`50`).
+- Supplier Returns queue adds an **Open only** filter which excludes Closed and Cancelled returns.
+- Restores the top-header **Supplier Returns** link as a native InvenTree plugin UI route at `/web/plugin/supplier-return/returns`.
+- The proven server queue at `/plugin/supplier-return/queue/` remains available as a fallback.
+- No database migration is required.
+
 # InvenTree Supplier Return v0.5.7
 
 ## v0.5.11
