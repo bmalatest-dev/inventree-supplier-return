@@ -772,7 +772,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.17'
+    VERSION = '0.5.18'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -795,20 +795,6 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     }
 
 
-    def get_ui_navigation_items(self, request, context, **kwargs):
-        # Purchasing sidebar entry. In this InvenTree build the navigation
-        # feature is already rendered beneath Manufacturer Parts; provide the
-        # display label in both the feature title and options.
-        return [{
-            'key': 'supplier-return-nav',
-            'title': _('Supplier Returns'),
-            'icon': 'ti:truck-return:outline',
-            'options': {
-                'url': f'/plugin/{self.SLUG}/queue/',
-                'title': _('Supplier Returns'),
-                'label': _('Supplier Returns'),
-            },
-        }]
 
     def get_ui_panels(self, request, context, **kwargs):
         context = context or {}

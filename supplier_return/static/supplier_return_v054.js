@@ -34,7 +34,7 @@ export async function renderSupplierReturnPanel(target, data) {
         const status=r.status==='SHIPPED'?'AWAITING RESOLUTION':r.status==='RESOLUTION'?'RESOLUTION IN PROGRESS':r.status;
         return `<div style="border:1px solid #ccc;border-radius:4px;padding:10px;margin:8px 0"><b>${esc(r.reference)}</b> — <b>${esc(status)}</b>${r.supplier_rma?` — Supplier RMA: ${esc(r.supplier_rma)}`:''}<br>${lines}${shipment}${progress}<div style="margin-top:8px">${buttons}</div></div>`;
       }).join('') || '<p>No Supplier Returns have been created for this PO.</p>';
-      target.innerHTML=`<div style="padding:12px"><h3>Supplier Returns</h3><p><b>Purchase Order:</b> #${state.purchase_order_id}</p><div>${cards}</div><hr><button id="sr-all">All Supplier Returns</button> <button id="sr-create">+ Create Supplier Return</button><div id="sr-editor" style="margin-top:12px"></div></div>`;
+      target.innerHTML=`<div style="padding:12px"><h3>Supplier Returns</h3><p><b>Purchase Order:</b> #${state.purchase_order_id}</p><div>${cards}</div><hr><button id="sr-all">View All Supplier Returns (Open & Closed)</button> <button id="sr-create">+ Create Supplier Return</button><div id="sr-editor" style="margin-top:12px"></div></div>`;
       wire();
     };
 
