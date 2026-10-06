@@ -663,6 +663,27 @@ def ready_to_receive_view(request, pk, resolution_pk):
     return JsonResponse(_serialize(obj))
 
 
+
+def _apply_stock_status(stock_item, status_key):
+    """Apply built-in or custom InvenTree stock status to a StockItem."""
+    standard = {10, 50, 55, 60, 65, 70, 75, 85}
+    status_key = int(status_key)
+    fields = ['updated']
+    if status_key in standard:
+        stock_item.status = status_key
+        fields.append('status')
+        if hasattr(stock_item, 'status_custom_key'):
+            stock_item.status_custom_key = None
+            fields.append('status_custom_key')
+    elif hasattr(stock_item, 'status_custom_key'):
+        stock_item.status_custom_key = status_key
+        fields.append('status_custom_key')
+    else:
+        # Compatibility fallback for older InvenTree versions.
+        stock_item.status = status_key
+        fields.append('status')
+    return fields
+
 @require_http_methods(['POST'])
 def receipt_view(request, pk, resolution_pk):
     """Receive physical replacement or reworked material against an actual resolution."""
@@ -676,8 +697,6 @@ def receipt_view(request, pk, resolution_pk):
         return JsonResponse({'error': 'Supplier Return resolution not found.'}, status=404)
     if res.resolution not in {'REPLACEMENT', 'REWORK'}:
         return JsonResponse({'error': 'Only replacement or repair/rework resolutions have physical receipts.'}, status=400)
-    if not res.ready_to_receive:
-        return JsonResponse({'error': 'Purchasing must mark this resolution Ready to Receive before Operations can receive it.'}, status=400)
     data = _json_body(request)
     try:
         qty = Decimal(str(data.get('quantity')))
@@ -716,8 +735,8 @@ def receipt_view(request, pk, resolution_pk):
                     received_stock = return_stock
                 old_batch = getattr(received_stock, 'batch', None) or ''
                 received_stock.batch = batch
-                received_stock.status = stock_status
-                received_stock.save(update_fields=['batch', 'status', 'updated'])
+                status_fields = _apply_stock_status(received_stock, stock_status)
+                received_stock.save(update_fields=list(dict.fromkeys(['batch'] + status_fields)))
                 from stock.status_codes import StockHistoryCode
                 received_stock.add_tracking_entry(
                     StockHistoryCode.STOCK_UPDATE,
@@ -729,8 +748,7 @@ def receipt_view(request, pk, resolution_pk):
                     ),
                     deltas={
                         'batch': batch,
-                        'status': stock_status,
-                        'supplier_return': obj.reference,
+                            'supplier_return': obj.reference,
                         'source_stock_item': return_stock.pk,
                     },
                 )
@@ -749,6 +767,8 @@ def receipt_view(request, pk, resolution_pk):
                 }
                 # Drop None values so model defaults are respected.
                 received_stock = StockItem.objects.create(**{k:v for k,v in kwargs.items() if v is not None})
+                status_fields = _apply_stock_status(received_stock, stock_status)
+                received_stock.save(update_fields=list(dict.fromkeys(status_fields)))
                 tracking_note = (
                     f'{obj.reference}: replacement stock received; '
                     f'Batch ID changed from {old_batch or "<blank>"} to {batch or "<blank>"}; '
@@ -921,7 +941,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.6.0'
+    VERSION = '0.6.1'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -957,7 +977,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v060.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v061.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,
