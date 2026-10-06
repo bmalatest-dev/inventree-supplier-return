@@ -5,7 +5,7 @@ from django.db import models
 class SupplierReturn(models.Model):
     class Status(models.TextChoices):
         DRAFT = 'DRAFT', 'Draft'
-        READY = 'READY', 'Ready to Return'
+        READY = 'READY', 'Ready to Ship'
         SHIPPED = 'SHIPPED', 'Shipped / Awaiting Resolution'
         RESOLUTION = 'RESOLUTION', 'Resolution in Progress'
         CLOSED = 'CLOSED', 'Closed'
@@ -94,6 +94,7 @@ class SupplierReturnResolution(models.Model):
     resolution = models.CharField(max_length=32, choices=Resolution.choices)
     quantity = models.DecimalField(max_digits=25, decimal_places=10)
     replacement_stock_item_id = models.PositiveIntegerField(null=True, blank=True)
+    ready_to_receive = models.BooleanField(default=False)
     reference = models.CharField(max_length=255, blank=True)
     resolution_date = models.DateField(null=True, blank=True)
     amount = models.DecimalField(max_digits=25, decimal_places=6, null=True, blank=True)

@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.5.11."""
+"""InvenTree Supplier Return plugin - V0.6.0."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -82,6 +82,7 @@ def _serialize(obj):
                         'resolution': r.resolution,
                         'quantity': _qty(r.quantity),
                         'replacement_stock_item_id': r.replacement_stock_item_id,
+                        'ready_to_receive': r.ready_to_receive,
                         'reference': r.reference,
                         'resolution_date': r.resolution_date.isoformat() if r.resolution_date else None,
                         'amount': str(r.amount) if r.amount is not None else None,
@@ -153,12 +154,18 @@ def _validate_lines(po_id, lines, exclude_return_id=None):
 
 
 def _apply_draft(obj, data, validated):
+    supplier_rma = (data.get('supplier_rma') or '').strip()
+    redmine_issue = (data.get('redmine_issue') or '').strip()
+    if not supplier_rma:
+        raise ValueError('Supplier RMA # is required.')
+    if not redmine_issue:
+        raise ValueError('Redmine Issue is required.')
     """Update an existing DRAFT in-place."""
     from .models import SupplierReturnLine
 
-    obj.supplier_rma = data.get('supplier_rma', '')
+    obj.supplier_rma = supplier_rma
     obj.holding_location_id = data.get('holding_location_id') or None
-    obj.redmine_issue = data.get('redmine_issue', '')
+    obj.redmine_issue = redmine_issue
     obj.notes = data.get('notes', '')
     obj.save(update_fields=['supplier_rma', 'holding_location_id', 'redmine_issue', 'notes', 'updated_at'])
 
@@ -257,7 +264,11 @@ def returns_view(request):
             purchase_order_id=po_id,
             created_by=request.user if request.user.is_authenticated else None,
         )
-        _apply_draft(obj, data, validated)
+        try:
+            _apply_draft(obj, data, validated)
+        except ValueError as exc:
+            transaction.set_rollback(True)
+            return JsonResponse({'error': str(exc)}, status=400)
         SupplierReturnEvent.objects.create(
             supplier_return=obj,
             event_type='CREATED',
@@ -292,7 +303,11 @@ def return_detail_view(request, pk):
         except ValueError as exc:
             return JsonResponse({'error': str(exc)}, status=400)
         with transaction.atomic():
-            _apply_draft(obj, data, validated)
+            try:
+                _apply_draft(obj, data, validated)
+            except ValueError as exc:
+                transaction.set_rollback(True)
+                return JsonResponse({'error': str(exc)}, status=400)
             SupplierReturnEvent.objects.create(
                 supplier_return=obj,
                 event_type='DRAFT_UPDATED',
@@ -338,11 +353,15 @@ def return_detail_view(request, pk):
 
     # READY: physically segregate the selected quantities into the holding location.
     if action == 'mark_ready':
+        if not (obj.supplier_rma or '').strip():
+            return JsonResponse({'error': 'Supplier RMA # is required before marking Ready to Ship.'}, status=400)
+        if not (obj.redmine_issue or '').strip():
+            return JsonResponse({'error': 'Redmine Issue is required before marking Ready to Ship.'}, status=400)
         if obj.status != 'DRAFT':
-            return JsonResponse({'error': 'Only a Draft Supplier Return can be marked Ready to Return.'}, status=400)
+            return JsonResponse({'error': 'Only a Draft Supplier Return can be marked Ready to Ship.'}, status=400)
         holding_id = data.get('holding_location_id') or obj.holding_location_id
         if not holding_id:
-            return JsonResponse({'error': 'A holding location is required before stock can be marked Ready to Return.'}, status=400)
+            return JsonResponse({'error': 'A holding location is required before stock can be marked Ready to Ship.'}, status=400)
         try:
             holding = StockLocation.objects.get(pk=int(holding_id))
         except (StockLocation.DoesNotExist, TypeError, ValueError):
@@ -405,7 +424,7 @@ def return_detail_view(request, pk):
     # SHIPPED: move all segregated return stock to a user-selected external location.
     if action == 'mark_shipped':
         if obj.status != 'READY':
-            return JsonResponse({'error': 'Only a Ready to Return Supplier Return can be marked Shipped.'}, status=400)
+            return JsonResponse({'error': 'Only a Ready to Ship Supplier Return can be marked Shipped.'}, status=400)
 
         external_id = data.get('external_location_id')
         if not external_id:
@@ -477,10 +496,14 @@ def return_detail_view(request, pk):
     # After READY, requested resolution / admin fields may still evolve. Returned stock and qty stay locked.
     if action == 'update_admin':
         if obj.status not in {'READY', 'SHIPPED', 'RESOLUTION'}:
-            return JsonResponse({'error': 'Administrative updates are available after the return is Ready to Return.'}, status=400)
-        obj.supplier_rma = data.get('supplier_rma', obj.supplier_rma)
-        obj.redmine_issue = data.get('redmine_issue', obj.redmine_issue)
+            return JsonResponse({'error': 'Administrative updates are available after the return is Ready to Ship.'}, status=400)
+        obj.supplier_rma = (data.get('supplier_rma', obj.supplier_rma) or '').strip()
+        obj.redmine_issue = (data.get('redmine_issue', obj.redmine_issue) or '').strip()
         obj.notes = data.get('notes', obj.notes)
+        if not obj.supplier_rma:
+            return JsonResponse({'error': 'Supplier RMA # is required.'}, status=400)
+        if not obj.redmine_issue:
+            return JsonResponse({'error': 'Redmine Issue is required.'}, status=400)
         requested = data.get('requested_resolutions') or {}
         with transaction.atomic():
             obj.save(update_fields=['supplier_rma', 'redmine_issue', 'notes', 'updated_at'])
@@ -617,6 +640,30 @@ def resolution_delete_view(request, pk, resolution_pk):
 
 
 @require_http_methods(['POST'])
+def ready_to_receive_view(request, pk, resolution_pk):
+    """Purchasing handoff: authorize a physical replacement/rework resolution for receiving."""
+    from .models import SupplierReturn, SupplierReturnEvent, SupplierReturnResolution
+    try:
+        obj = SupplierReturn.objects.get(pk=pk)
+        res = SupplierReturnResolution.objects.get(pk=resolution_pk, line__supplier_return=obj)
+    except (SupplierReturn.DoesNotExist, SupplierReturnResolution.DoesNotExist):
+        return JsonResponse({'error': 'Supplier Return resolution not found.'}, status=404)
+    if res.resolution not in {'REPLACEMENT', 'REWORK'}:
+        return JsonResponse({'error': 'Only replacement or repair/rework resolutions can be marked Ready to Receive.'}, status=400)
+    if obj.status == 'CLOSED':
+        return JsonResponse({'error': 'Closed Supplier Returns cannot be changed.'}, status=400)
+    res.ready_to_receive = True
+    res.save(update_fields=['ready_to_receive'])
+    SupplierReturnEvent.objects.create(
+        supplier_return=obj, event_type='READY_TO_RECEIVE',
+        user=request.user if request.user.is_authenticated else None,
+        notes=f'{res.get_resolution_display()} resolution #{res.pk} marked Ready to Receive',
+    )
+    obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=obj.pk)
+    return JsonResponse(_serialize(obj))
+
+
+@require_http_methods(['POST'])
 def receipt_view(request, pk, resolution_pk):
     """Receive physical replacement or reworked material against an actual resolution."""
     from .models import SupplierReturn, SupplierReturnEvent, SupplierReturnReceipt, SupplierReturnResolution
@@ -629,6 +676,8 @@ def receipt_view(request, pk, resolution_pk):
         return JsonResponse({'error': 'Supplier Return resolution not found.'}, status=404)
     if res.resolution not in {'REPLACEMENT', 'REWORK'}:
         return JsonResponse({'error': 'Only replacement or repair/rework resolutions have physical receipts.'}, status=400)
+    if not res.ready_to_receive:
+        return JsonResponse({'error': 'Purchasing must mark this resolution Ready to Receive before Operations can receive it.'}, status=400)
     data = _json_body(request)
     try:
         qty = Decimal(str(data.get('quantity')))
@@ -770,6 +819,10 @@ def close_return_view(request, pk):
         obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=pk)
     except SupplierReturn.DoesNotExist:
         return JsonResponse({'error': 'Supplier Return not found.'}, status=404)
+    if not (obj.supplier_rma or '').strip():
+        return JsonResponse({'error': 'Supplier RMA # is required before closing the Supplier Return.'}, status=400)
+    if not (obj.redmine_issue or '').strip():
+        return JsonResponse({'error': 'Redmine Issue is required before closing the Supplier Return.'}, status=400)
     for line in obj.lines.all():
         resolved = sum((r.quantity for r in line.actual_resolutions.all()), Decimal('0'))
         if resolved != line.quantity:
@@ -868,7 +921,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.5.22'
+    VERSION = '0.6.0'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -881,6 +934,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             path('returns/<int:pk>/', return_detail_view, name='return-detail'),
             path('returns/<int:pk>/resolutions/', resolution_view, name='resolution-create'),
             path('returns/<int:pk>/resolutions/<int:resolution_pk>/', resolution_delete_view, name='resolution-delete'),
+            path('returns/<int:pk>/resolutions/<int:resolution_pk>/ready-to-receive/', ready_to_receive_view, name='resolution-ready-to-receive'),
             path('returns/<int:pk>/resolutions/<int:resolution_pk>/receive/', receipt_view, name='resolution-receive'),
             path('returns/<int:pk>/close/', close_return_view, name='return-close'),
         ]
@@ -903,7 +957,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v522.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v060.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,

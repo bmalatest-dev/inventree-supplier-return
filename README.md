@@ -1,3 +1,19 @@
+# InvenTree Supplier Return v0.6.0
+
+## v0.6.0 workflow release
+
+- Renames the prepared state from **Ready to Return** to **Ready to Ship**.
+- Requires Supplier RMA # and Redmine Issue with clear validation messages.
+- Adds Select All / Clear All for eligible return stock.
+- Makes the Holding Location field searchable by typing.
+- Displays Part Name alongside stock items in the SR panel.
+- Keeps requested resolution separate from the supplier's actual resolution.
+- Adds an explicit **Ready to Receive** purchaser handoff for Replacement and Repair/Rework resolutions.
+- Blocks physical receiving until Purchasing marks the applicable resolution Ready to Receive.
+- Loads configured InvenTree stock statuses at receiving, including custom statuses when exposed by the InvenTree API, with built-in statuses as fallback.
+- Improves visual state indication and refreshes the page with a cache-busting URL after successful receipt to avoid stale receiving state.
+- Adds database migration `0006_ready_to_receive`.
+
 # v0.5.13
 
 Final workflow polish based on validated v0.5.11 behavior:
