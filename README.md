@@ -1,6 +1,10 @@
-# InvenTree Supplier Return v0.6.2
+# InvenTree Supplier Return v0.6.3
 
-## v0.6.2 workflow release
+## v0.6.3 workflow release
+
+Actual Resolution now starts with one return-line selector and supports **+ Add Another Resolution** for additional resolved lines. Only lines actually resolved by the supplier are submitted; quantity zero is never used to create placeholder resolution records. Selected return lines are excluded from other rows, quantities default to the outstanding quantity, and partial resolutions remain available for later resolution.
+
+## v0.6.3 workflow release
 
 - Renames the prepared state from **Ready to Return** to **Ready to Ship**.
 - Requires Supplier RMA # and Redmine Issue with clear validation messages.
