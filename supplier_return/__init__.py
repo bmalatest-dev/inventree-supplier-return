@@ -467,6 +467,10 @@ def return_detail_view(request, pk):
                     ok = stock.move(external, note, user, quantity=line.quantity)
                     if ok is False:
                         raise ValueError(f'Could not move Return Stock #{stock.pk} to the external location.')
+                    # Once physically shipped, this stock is no longer available for allocation.
+                    # InvenTree built-in status 85 is 'Returned' and is an unavailable stock state.
+                    stock.status = 85
+                    stock.save(update_fields=['status'])
 
                 obj.external_location_id = external.pk
                 obj.shipment_date = shipment_date
@@ -941,7 +945,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.6.1'
+    VERSION = '0.6.2'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -977,7 +981,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v061.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v062.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,

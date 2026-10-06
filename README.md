@@ -1,6 +1,6 @@
-# InvenTree Supplier Return v0.6.1
+# InvenTree Supplier Return v0.6.2
 
-## v0.6.1 workflow release
+## v0.6.2 workflow release
 
 - Renames the prepared state from **Ready to Return** to **Ready to Ship**.
 - Requires Supplier RMA # and Redmine Issue with clear validation messages.
