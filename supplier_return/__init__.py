@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.6.4."""
+"""InvenTree Supplier Return plugin - V0.6.5."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -183,23 +183,21 @@ def _apply_draft(obj, data, validated):
         )
 
 
-def _stock_status_label(item):
-    """Return the current InvenTree stock status as a human-readable label."""
-    # InvenTree provides status display handling on StockItem, including custom
-    # statuses on supported versions. Prefer that API so the selector mirrors
-    # the status shown on the Stock Item page.
-    try:
-        label = item.get_status_display()
-        if label:
-            return str(label)
-    except Exception:
-        pass
-
-    # Safe fallback if status display is unavailable for an older InvenTree.
+def _stock_status_key(item):
+    """Return the current InvenTree stock status key without stringifying StockItem."""
+    # Custom stock statuses use status_custom_key.  Prefer it when present so
+    # the UI can resolve labels such as Failed VI / Quarantine from the
+    # InvenTree stock-status API.
     custom_key = getattr(item, 'status_custom_key', None)
-    if custom_key is not None:
-        return f'Custom ({custom_key})'
-    return str(getattr(item, 'status', '') or 'Unknown')
+    if custom_key not in (None, ''):
+        return str(custom_key)
+
+    value = getattr(item, 'status', None)
+    # Some Django fields may expose enum-like values. Keep only the primitive
+    # key; never call str(item) / get_status_display() here.
+    if hasattr(value, 'value'):
+        value = value.value
+    return '' if value is None else str(value)
 
 
 @require_http_methods(['GET'])
@@ -227,6 +225,14 @@ def context_view(request, model, pk):
     ]
 
     eligible = []
+    po_label = f'PO-{po_id}'
+    try:
+        from order.models import PurchaseOrder
+        po_obj = PurchaseOrder.objects.get(pk=po_id)
+        po_label = str(getattr(po_obj, 'reference', None) or po_obj)
+    except Exception:
+        pass
+
     try:
         stocks = StockItem.objects.filter(purchase_order_id=po_id).select_related('part', 'location')
     except Exception:
@@ -244,7 +250,8 @@ def context_view(request, model, pk):
             # not the full hierarchical path / description.
             'location': getattr(getattr(item, 'location', None), 'name', '') or '',
             'location_id': getattr(item, 'location_id', None),
-            'status': _stock_status_label(item),
+            'status_key': _stock_status_key(item),
+            'purchase_order': po_label,
         })
 
     return JsonResponse({
@@ -967,7 +974,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.6.4'
+    VERSION = '0.6.5'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -1003,7 +1010,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v064.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v065.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,

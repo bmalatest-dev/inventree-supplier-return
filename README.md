@@ -1,7 +1,7 @@
 # InvenTree Supplier Return v0.6.3
 
 
-## v0.6.4
+## v0.6.5
 
 - Stock selection now displays the current Stock Item status.
 - Stock selection now displays only the leaf stock location name instead of the full location path/details.
