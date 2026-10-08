@@ -1,5 +1,12 @@
 # InvenTree Supplier Return v0.6.3
 
+
+## v0.6.4
+
+- Stock selection now displays the current Stock Item status.
+- Stock selection now displays only the leaf stock location name instead of the full location path/details.
+- No database migration or workflow change is required.
+
 ## v0.6.3 workflow release
 
 Actual Resolution now starts with one return-line selector and supports **+ Add Another Resolution** for additional resolved lines. Only lines actually resolved by the supplier are submitted; quantity zero is never used to create placeholder resolution records. Selected return lines are excluded from other rows, quantities default to the outstanding quantity, and partial resolutions remain available for later resolution.

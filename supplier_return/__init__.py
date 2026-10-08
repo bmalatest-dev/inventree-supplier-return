@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.6.0."""
+"""InvenTree Supplier Return plugin - V0.6.4."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -183,6 +183,25 @@ def _apply_draft(obj, data, validated):
         )
 
 
+def _stock_status_label(item):
+    """Return the current InvenTree stock status as a human-readable label."""
+    # InvenTree provides status display handling on StockItem, including custom
+    # statuses on supported versions. Prefer that API so the selector mirrors
+    # the status shown on the Stock Item page.
+    try:
+        label = item.get_status_display()
+        if label:
+            return str(label)
+    except Exception:
+        pass
+
+    # Safe fallback if status display is unavailable for an older InvenTree.
+    custom_key = getattr(item, 'status_custom_key', None)
+    if custom_key is not None:
+        return f'Custom ({custom_key})'
+    return str(getattr(item, 'status', '') or 'Unknown')
+
+
 @require_http_methods(['GET'])
 def context_view(request, model, pk):
     from .models import SupplierReturn
@@ -221,8 +240,11 @@ def context_view(request, model, pk):
             'quantity': _qty(item.quantity),
             'serial': getattr(item, 'serial', None),
             'batch': getattr(item, 'batch', None),
-            'location': str(getattr(item, 'location', '') or ''),
+            # Keep the selector concise: return only the leaf location name,
+            # not the full hierarchical path / description.
+            'location': getattr(getattr(item, 'location', None), 'name', '') or '',
             'location_id': getattr(item, 'location_id', None),
+            'status': _stock_status_label(item),
         })
 
     return JsonResponse({
@@ -945,7 +967,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.6.3'
+    VERSION = '0.6.4'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
@@ -981,7 +1003,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
             'key': 'supplier-return-panel',
             'title': _('Supplier Returns'),
             'description': _('Supplier returns and RMA activity for this record.'),
-            'source': self.plugin_static_file('supplier_return_v063.js:renderSupplierReturnPanel'),
+            'source': self.plugin_static_file('supplier_return_v064.js:renderSupplierReturnPanel'),
             'icon': 'ti:truck-return:outline',
             'context': {
                 'target_model': target_model,
