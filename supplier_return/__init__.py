@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.6.6."""
+"""InvenTree Supplier Return plugin - V0.6.7."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -52,7 +52,7 @@ def _stock_po(stock):
             ).first()
 
         # InvenTree uses stock_item for the parent of a split stock item.
-        parent_id = getattr(current, 'stock_item_id', None)
+        parent_id = getattr(current, 'parent_id', None)
         current = StockItem.objects.filter(pk=parent_id).first() if parent_id else None
     return None
 
@@ -270,7 +270,7 @@ def context_view(request, model, pk):
     all_ids = set(seed_ids)
     frontier = set(seed_ids)
     while frontier:
-        children = set(StockItem.objects.filter(stock_item_id__in=frontier).values_list('pk', flat=True)) - all_ids
+        children = set(StockItem.objects.filter(parent_id__in=frontier).values_list('pk', flat=True)) - all_ids
         all_ids.update(children)
         frontier = children
     stocks = StockItem.objects.filter(pk__in=all_ids).select_related('part', 'location')
@@ -1011,7 +1011,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.6.6'
+    VERSION = '0.6.7'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
