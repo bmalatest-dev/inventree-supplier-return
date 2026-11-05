@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.6.5."""
+"""InvenTree Supplier Return plugin - V0.6.6."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -21,13 +21,39 @@ def _json_body(request):
 
 
 def _stock_po(stock):
-    for name in ('purchase_order', 'purchaseorder'):
-        value = getattr(stock, name, None)
-        if value is not None:
-            return value
-    line = getattr(stock, 'purchase_order_line', None) or getattr(stock, 'purchaseorderlineitem', None)
-    if line:
-        return getattr(line, 'order', None) or getattr(line, 'purchase_order', None)
+    """Resolve PO from native receipt or a prior supplier-return receipt.
+
+    Replacement items intentionally have no native purchase_order FK. Follow
+    the plugin's receipt provenance, including InvenTree split descendants.
+    """
+    from order.models import PurchaseOrder
+    from stock.models import StockItem
+    from .models import SupplierReturnReceipt
+
+    visited = set()
+    current = stock
+    while current is not None and current.pk not in visited:
+        visited.add(current.pk)
+        for name in ('purchase_order', 'purchaseorder'):
+            value = getattr(current, name, None)
+            if value is not None:
+                return value
+        line = getattr(current, 'purchase_order_line', None) or getattr(current, 'purchaseorderlineitem', None)
+        if line:
+            po = getattr(line, 'order', None) or getattr(line, 'purchase_order', None)
+            if po is not None:
+                return po
+
+        receipt = (SupplierReturnReceipt.objects.filter(stock_item_id=current.pk)
+                   .select_related('resolution__line__supplier_return').order_by('-pk').first())
+        if receipt:
+            return PurchaseOrder.objects.filter(
+                pk=receipt.resolution.line.supplier_return.purchase_order_id
+            ).first()
+
+        # InvenTree uses stock_item for the parent of a split stock item.
+        parent_id = getattr(current, 'stock_item_id', None)
+        current = StockItem.objects.filter(pk=parent_id).first() if parent_id else None
     return None
 
 
@@ -233,10 +259,21 @@ def context_view(request, model, pk):
     except Exception:
         pass
 
-    try:
-        stocks = StockItem.objects.filter(purchase_order_id=po_id).select_related('part', 'location')
-    except Exception:
-        stocks = StockItem.objects.none()
+    # Include native PO receipts, RMA receipts and split descendants of both.
+    # Use a bounded ancestry walk instead of assuming replacements have PO FKs.
+    from .models import SupplierReturnReceipt
+    receipt_ids = list(SupplierReturnReceipt.objects.filter(
+        resolution__line__supplier_return__purchase_order_id=po_id
+    ).values_list('stock_item_id', flat=True))
+    seed_ids = set(StockItem.objects.filter(purchase_order_id=po_id).values_list('pk', flat=True))
+    seed_ids.update(x for x in receipt_ids if x is not None)
+    all_ids = set(seed_ids)
+    frontier = set(seed_ids)
+    while frontier:
+        children = set(StockItem.objects.filter(stock_item_id__in=frontier).values_list('pk', flat=True)) - all_ids
+        all_ids.update(children)
+        frontier = children
+    stocks = StockItem.objects.filter(pk__in=all_ids).select_related('part', 'location')
 
     for item in stocks:
         part = getattr(item, 'part', None)
@@ -974,7 +1011,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.6.5'
+    VERSION = '0.6.6'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
