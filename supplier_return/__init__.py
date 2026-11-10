@@ -534,8 +534,8 @@ def return_detail_view(request, pk):
                     if ok is False:
                         raise ValueError(f'Could not move Return Stock #{stock.pk} to the external location.')
                     # Once physically shipped, this stock is no longer available for allocation.
-                    # InvenTree built-in status 85 is 'Returned' and is an unavailable stock state.
-                    stock.status = 85
+                    # InvenTree built-in status 75 is 'Quarantined', which excludes supplier-held stock from available inventory.
+                    stock.status = 75
                     stock.save(update_fields=['status'])
 
                 obj.external_location_id = external.pk
