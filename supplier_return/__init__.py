@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.6.7."""
+"""InvenTree Supplier Return plugin - V0.6.8."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -1011,7 +1011,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.6.7'
+    VERSION = '0.6.8'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
