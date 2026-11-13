@@ -784,10 +784,10 @@ def receipt_view(request, pk, resolution_pk):
     user = request.user if request.user.is_authenticated else None
     notes = (data.get('notes') or '').strip()
     batch = (data.get('batch') or '').strip()
-    try:
-        stock_status = int(data.get('status', 50))
-    except (TypeError, ValueError):
-        return JsonResponse({'error': 'A valid stock status is required.'}, status=400)
+    # Supplier Return receipts always enter inspection as Attention needed.
+    # Ignore any client-supplied status, including custom status keys, to avoid
+    # persisting an invalid built-in StockItem.status value.
+    stock_status = 50
     try:
         with transaction.atomic():
             res = SupplierReturnResolution.objects.select_for_update().select_related('line').get(pk=res.pk)
@@ -1018,7 +1018,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.6.10'
+    VERSION = '0.6.11'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
