@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.6.8."""
+"""InvenTree Supplier Return plugin - V0.6.9."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -386,7 +386,7 @@ def return_detail_view(request, pk):
     # CANCEL: permitted only before shipment.
     if action == 'cancel_return':
         if obj.status not in {'DRAFT', 'READY'}:
-            return JsonResponse({'error': 'A Supplier Return can only be cancelled before it has shipped.'}, status=400)
+            return JsonResponse({'error': 'A Supplier Return with recorded resolutions cannot be cancelled; reverse those resolutions first.'}, status=400)
         user = request.user if request.user.is_authenticated else None
         try:
             with transaction.atomic():
@@ -489,8 +489,8 @@ def return_detail_view(request, pk):
 
     # SHIPPED: move all segregated return stock to a user-selected external location.
     if action == 'mark_shipped':
-        if obj.status != 'READY':
-            return JsonResponse({'error': 'Only a Ready to Ship Supplier Return can be marked Shipped.'}, status=400)
+        if obj.status not in {'READY', 'RESOLUTION'} or obj.shipment_date:
+            return JsonResponse({'error': 'Only an unshipped Ready to Ship / advance-resolution Supplier Return can be marked Shipped.'}, status=400)
 
         external_id = data.get('external_location_id')
         if not external_id:
@@ -513,8 +513,8 @@ def return_detail_view(request, pk):
         try:
             with transaction.atomic():
                 obj = SupplierReturn.objects.select_for_update().get(pk=obj.pk)
-                if obj.status != 'READY':
-                    raise ValueError('This Supplier Return is no longer Ready to Return.')
+                if obj.status not in {'READY', 'RESOLUTION'} or obj.shipment_date:
+                    raise ValueError('This Supplier Return has already shipped or is not ready to ship.')
                 lines = list(obj.lines.select_for_update())
                 if not lines:
                     raise ValueError('At least one return line is required.')
@@ -543,7 +543,7 @@ def return_detail_view(request, pk):
                 obj.carrier = carrier
                 obj.tracking_number = tracking
                 obj.shipment_notes = shipment_notes
-                obj.status = 'SHIPPED'
+                obj.status = 'RESOLUTION' if obj.lines.filter(actual_resolutions__isnull=False).exists() else 'SHIPPED'
                 obj.save(update_fields=[
                     'external_location_id', 'shipment_date', 'carrier', 'tracking_number',
                     'shipment_notes', 'status', 'updated_at'
@@ -606,8 +606,8 @@ def resolution_view(request, pk):
         obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=pk)
     except SupplierReturn.DoesNotExist:
         return JsonResponse({'error': 'Supplier Return not found.'}, status=404)
-    if obj.status not in {'SHIPPED', 'RESOLUTION'}:
-        return JsonResponse({'error': 'Actual resolution can only be recorded after the return has been shipped.'}, status=400)
+    if obj.status not in {'READY', 'SHIPPED', 'RESOLUTION'}:
+        return JsonResponse({'error': 'Prepare return stock before recording an actual resolution.'}, status=400)
 
     data = _json_body(request)
     try:
@@ -621,6 +621,8 @@ def resolution_view(request, pk):
     if qty <= 0:
         return JsonResponse({'error': 'Resolution quantity must be greater than zero.'}, status=400)
     notes = (data.get('notes') or '').strip()
+    if obj.shipment_date is None and resolution != 'REPLACEMENT':
+        return JsonResponse({'error': 'Before shipping the original, only an advance replacement can be recorded.'}, status=400)
     if resolution == 'OTHER' and not notes:
         return JsonResponse({'error': 'Notes are required when Actual Resolution is Other.'}, status=400)
     already = sum((r.quantity for r in line.actual_resolutions.all()), Decimal('0'))
@@ -702,7 +704,7 @@ def resolution_delete_view(request, pk, resolution_pk):
             notes=f'{_qty(qty)} {kind} resolution reversed on line #{line_pk}',
         )
         remaining = any(line.actual_resolutions.exists() for line in obj.lines.all())
-        obj.status = 'RESOLUTION' if remaining else 'SHIPPED'
+        obj.status = 'RESOLUTION' if remaining else ('SHIPPED' if obj.shipment_date else 'READY')
         obj.save(update_fields=['status', 'updated_at'])
 
     obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=obj.pk)
@@ -767,6 +769,8 @@ def receipt_view(request, pk, resolution_pk):
         return JsonResponse({'error': 'Supplier Return resolution not found.'}, status=404)
     if res.resolution not in {'REPLACEMENT', 'REWORK'}:
         return JsonResponse({'error': 'Only replacement or repair/rework resolutions have physical receipts.'}, status=400)
+    if res.resolution == 'REWORK' and obj.shipment_date is None:
+        return JsonResponse({'error': 'Original material must ship before a reworked item can be received.'}, status=400)
     data = _json_body(request)
     try:
         qty = Decimal(str(data.get('quantity')))
@@ -909,6 +913,8 @@ def close_return_view(request, pk):
         obj = SupplierReturn.objects.prefetch_related('lines__actual_resolutions__receipts').get(pk=pk)
     except SupplierReturn.DoesNotExist:
         return JsonResponse({'error': 'Supplier Return not found.'}, status=404)
+    if obj.shipment_date is None:
+        return JsonResponse({'error': 'The original material has not shipped. Ship it before closing the Supplier Return.'}, status=400)
     if not (obj.supplier_rma or '').strip():
         return JsonResponse({'error': 'Supplier RMA # is required before closing the Supplier Return.'}, status=400)
     if not (obj.redmine_issue or '').strip():
@@ -1011,7 +1017,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.6.8'
+    VERSION = '0.6.9'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
