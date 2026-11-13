@@ -1,4 +1,4 @@
-"""InvenTree Supplier Return plugin - V0.6.9."""
+"""InvenTree Supplier Return plugin - V0.6.10."""
 from decimal import Decimal, InvalidOperation
 import json
 
@@ -864,9 +864,10 @@ def receipt_view(request, pk, resolution_pk):
                         'source_stock_item': return_stock.pk,
                     },
                 )
-                ok = return_stock.take_stock(qty, user, notes=f'{obj.reference}: replaced by Stock #{received_stock.pk}')
-                if ok is False and qty < return_stock.quantity:
-                    raise ValueError('Could not reduce returned stock after replacement receipt.')
+                # Advance replacements do not imply the original has left our facility.
+                # Preserve the original stock until it is physically shipped; after
+                # shipment it remains quarantined at the supplier location for traceability.
+                # Never consume it simply because the replacement arrived.
 
             SupplierReturnReceipt.objects.create(
                 resolution=res, quantity=qty, stock_item_id=received_stock.pk,
@@ -1017,7 +1018,7 @@ class SupplierReturnPlugin(UrlsMixin, AppMixin, SettingsMixin, UserInterfaceMixi
     SLUG = 'supplier-return'
     TITLE = 'Supplier Return'
     DESCRIPTION = 'Manage supplier returns, RMAs, replacements, credits, refunds and rework with purchase-order and stock traceability.'
-    VERSION = '0.6.9'
+    VERSION = '0.6.10'
     AUTHOR = 'Per Vices Corporation'
     WEBSITE = 'https://github.com/bmalatest-dev/inventree-supplier-return'
     LICENSE = 'MIT'
